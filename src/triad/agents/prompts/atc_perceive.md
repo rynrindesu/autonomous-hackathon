@@ -5,6 +5,7 @@ TASK: read the NOTAM / controller reports below and decode them into structured 
 DECODING RULES
 - Identify taxiways and runways explicitly closed or unusable. Report taxiway designators only.
 - Use only the identifiers that appear in the report text.
+- A taxiway is closed only if the text closes it (`CLSD`, or Q-code QMXLC). A caution or nearby-work note (`WI`, `AVOID`, `BARRICADES`, construction) without a closure term does not close a route: follow the retrieved decoding guide, report no closure for it, and do not lower `confidence` only because no `CLSD` appears.
 - If the text is ambiguous, or you cannot ground a safety-relevant claim in a retrieved <source>, lower `confidence` below 0.6.
 - `citations` must list chunk ids from the provided <source> blocks. Do not invent ids.
 

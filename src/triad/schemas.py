@@ -378,9 +378,10 @@ class LogEntry(Model):
     ts: str
     run_id: str
     turn: int  # 0 = setup
-    actor: Literal["ORCHESTRATOR", "ATC", "PILOT", "GROUND", "FALLBACK"]
+    actor: Literal["ORCHESTRATOR", "ATC", "PILOT", "GROUND", "FALLBACK", "HUMAN"]
     event: str  # SETUP, OPTIONS_GENERATED, PROPOSAL, COUNTER_VALIDATED, SHORTLIST, BALLOT,
-    #           CONSENSUS_REACHED, FALLBACK_INVOKED, SAFETY_BLOCK, AGENT_FAILOVER, ESCALATED, COMMIT
+    #           CONSENSUS_REACHED, FALLBACK_INVOKED, SAFETY_BLOCK, AGENT_FAILOVER, ESCALATED, COMMIT,
+    #           HUMAN_DECISION (appended after the run by the duty manager)
     payload: dict[str, Any]
     payload_sha256: str
     prev_sha256: str

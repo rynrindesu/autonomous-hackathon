@@ -14,7 +14,7 @@ if str(APP_DIR) not in sys.path:
 
 import streamlit as st  # noqa: E402
 
-from components import evaluation, render, theme  # noqa: E402
+from components import evaluation, render, theme, transcript  # noqa: E402
 from components.data import (  # noqa: E402
     ROLES,
     available_runs,
@@ -459,6 +459,42 @@ def _resolution_tab(run) -> None:
             '<div class="td-note">No final check table: this run was escalated before a commit.</div>'
             "</div>"
         )
+    _human_decision(run)
+
+
+def _human_decision(run) -> None:
+    """Duty-manager approve/reject, appended to the hash-chained log as HUMAN_DECISION."""
+    if run.status not in {"CONSENSUS", "FALLBACK"}:
+        return
+    _section("Human", "Duty manager decision", "appended to log.jsonl · joins the hash chain")
+    prior = [e for e in run.raw_entries if e.get("event") == "HUMAN_DECISION"]
+    if prior:
+        p = prior[-1].get("payload", {})
+        st.info(f"{str(p.get('decision', '')).upper()} by {p.get('user')} at {p.get('timestamp')}: {p.get('reason') or '(no reason)'}")
+        return
+    key = run.run_dir.name
+    reason = st.text_input("Reason", key=f"hd_reason_{key}", max_chars=200)
+    approve, reject, _ = st.columns([1, 1, 6])
+    decision = "approve" if approve.button("Approve", key=f"hd_ok_{key}") else (
+        "reject" if reject.button("Reject", key=f"hd_no_{key}") else None
+    )
+    if decision:
+        from triad.log.consensus_log import ConsensusLog, utc_now_iso
+
+        log = ConsensusLog.resume(run.run_dir)
+        log.append(
+            turn=run.turn,
+            actor="HUMAN",
+            event="HUMAN_DECISION",
+            payload={
+                "decision": decision,
+                "reason": reason.strip(),
+                "user": "duty_manager",
+                "timestamp": utc_now_iso(),
+                "option_id": run.committed_id,
+            },
+        )
+        st.rerun()
 
 
 # --------------------------------------------------------------------------- safety
@@ -616,18 +652,20 @@ def main() -> None:
     md(render.status_strip_html(run))
     md(render.flow_html(run))
 
-    tabs = st.tabs(["Negotiation", "Options", "Resolution", "Safety", "Audit", "Evaluation"])
+    tabs = st.tabs(["Transcript", "Negotiation", "Options", "Resolution", "Safety", "Audit", "Evaluation"])
     with tabs[0]:
-        _negotiation_tab(run)
+        transcript.render(transcript.build_transcript(run.raw_entries))
     with tabs[1]:
-        _options_tab(run)
+        _negotiation_tab(run)
     with tabs[2]:
-        _resolution_tab(run)
+        _options_tab(run)
     with tabs[3]:
-        _safety_tab(run)
+        _resolution_tab(run)
     with tabs[4]:
-        _audit_tab(run)
+        _safety_tab(run)
     with tabs[5]:
+        _audit_tab(run)
+    with tabs[6]:
         evaluation.render_panel()
 
     md(render.footer_html(run))

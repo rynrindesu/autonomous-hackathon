@@ -202,7 +202,9 @@ class LLMAgent(BaseAgent):
         self.last_usage: dict[str, Any] | None = None
         self.call_usage: dict[str, dict[str, Any]] = {}
         self.injection_findings: list[dict[str, Any]] = []
+        self.perception_default_reason: str | None = None  # why perception fell back (logged)
         self._retrieved_chunks: list[Any] = []
+        self._cited_ids: list[str] = []
         self._unsafe_ids: set[str] = set()
 
     # ------------------------------------------------------------------ helpers
@@ -358,7 +360,8 @@ class LLMAgent(BaseAgent):
                 system, user, schema, name=f"{self.role.value.lower()}_perceive"
             )
             self._record(usage, "perceive")
-        except Exception:  # noqa: BLE001 - any LLM failure -> conservative
+        except Exception as exc:  # noqa: BLE001 - any LLM failure -> conservative
+            self.perception_default_reason = f"llm_error: {type(exc).__name__}"
             self._facts = conservative_facts(self.role, public, self._private)
             return self._facts
 
@@ -366,6 +369,7 @@ class LLMAgent(BaseAgent):
         return self._facts
 
     def _to_facts(self, public: PublicEvent, perception: Any) -> list[PerceivedFact]:
+        self._cited_ids = [str(cid) for cid in perception.citations or []]
         citation = self._valid_citation(self._salvage_ids(perception.citations, perception))
         confidence = float(perception.confidence)
         facts: list[PerceivedFact] = []
@@ -421,24 +425,34 @@ class LLMAgent(BaseAgent):
         self, public: PublicEvent, facts: list[PerceivedFact], confidence: float
     ) -> list[PerceivedFact]:
         if confidence < 0.6:
+            self.perception_default_reason = f"low_confidence: model confidence {confidence:.2f} < 0.6"
             return conservative_facts(self.role, public, self._private)
 
         conservative = {
             fact.key: fact for fact in conservative_facts(self.role, public, self._private)
         }
         patched: list[PerceivedFact] = []
+        reasons: list[str] = []
         for fact in facts:
             if fact.key in _SAFETY_KEYS[self.role]:
                 missing = fact.citation is None
+                why = (
+                    f"invalid_citation: {fact.key} cites {self._cited_ids or 'nothing'}, "
+                    f"none of the retrieved chunks {[c.chunk_id for c in self._retrieved_chunks]}"
+                )
                 if self.role is AgentRole.PILOT and not fact.value:
                     missing = True
+                    why = f"empty_value: no {fact.key} levels reported"
                 if self.role is AgentRole.GROUND and isinstance(fact.value, dict):
                     if fact.value.get("deferrable") is None:
                         missing = True
+                        why = "missing_field: defect.deferrable is null"
                 if missing and fact.key in conservative:
+                    reasons.append(why)
                     patched.append(conservative[fact.key])
                     continue
             patched.append(fact)
+        self.perception_default_reason = "; ".join(reasons) or None
         return patched
 
     # ------------------------------------------------------------------ turn 1

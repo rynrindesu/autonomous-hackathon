@@ -63,6 +63,20 @@ class ConsensusLog:
             # Start a fresh log for this run.
             (self.run_dir / "log.jsonl").write_text("", encoding="utf-8")
 
+    @classmethod
+    def resume(cls, run_dir: Path | str, *, clock: Callable[[], str] | None = None) -> "ConsensusLog":
+        """Reopen an existing ``run_dir/log.jsonl`` for appending, continuing its hash chain."""
+        run_dir = Path(run_dir)
+        entries = _load_entries(run_dir / "log.jsonl")
+        if not cls.verify(entries):
+            raise ValueError(f"refusing to extend a log that fails verify(): {run_dir}")
+        log = cls(entries[0].run_id if entries else run_dir.name, clock=clock)
+        log.run_dir = run_dir  # set after __init__ so the existing file is not truncated
+        log.entries = entries
+        for entry in entries:
+            log._chain = chain_hash(log._chain, entry.payload_sha256)
+        return log
+
     # ------------------------------------------------------------------ append
     def append(
         self,

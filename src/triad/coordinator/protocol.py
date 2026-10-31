@@ -491,19 +491,16 @@ class Orchestrator:
 
     def _log_perception(self, role: AgentRole, agent: Any, perception: dict[str, Any]) -> None:
         facts = perception.get("facts") or []
-        self.log.append(
-            1,
-            role.value,
-            "PERCEPTION",
-            {
-                "role": role.value,
-                "impl": str(getattr(agent, "impl", "unknown")),
-                "failover": bool(perception.get("failover")),
-                "n_conservative_defaults": sum(1 for f in facts if f.get("conservative_default")),
-                "facts": facts,
-            },
-            usage=self._usage_payload(agent, "perceive"),
-        )
+        payload: dict[str, Any] = {
+            "role": role.value,
+            "impl": str(getattr(agent, "impl", "unknown")),
+            "failover": bool(perception.get("failover")),
+            "n_conservative_defaults": sum(1 for f in facts if f.get("conservative_default")),
+            "facts": facts,
+        }
+        if perception.get("default_reason"):
+            payload["default_reason"] = perception["default_reason"]
+        self.log.append(1, role.value, "PERCEPTION", payload, usage=self._usage_payload(agent, "perceive"))
         for finding in perception.get("injections") or []:
             self.log.append(
                 1,
@@ -538,7 +535,12 @@ class Orchestrator:
             for fact in facts
         ]
         injections = list(getattr(original, "injection_findings", None) or [])
-        return {"facts": summary, "injections": injections, "failover": failover}
+        return {
+            "facts": summary,
+            "injections": injections,
+            "failover": failover,
+            "default_reason": getattr(original, "perception_default_reason", None),
+        }
 
     def _collect_turn1(
         self, options: list[CandidateOption]

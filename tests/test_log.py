@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from triad.log.consensus_log import ZERO_CHAIN, ConsensusLog
 from triad.log.manifest import build_manifest, read_manifest, write_manifest, write_resolution
 from triad.schemas import Mode, Resolution
@@ -69,3 +71,34 @@ def test_manifest_and_resolution_written(tmp_path):
     res_path = write_resolution(resolution, tmp_path)
     assert res_path.exists()
     assert json.loads(res_path.read_text())["status"] == "FALLBACK"
+
+
+def test_resume_appends_human_decision_and_chain_still_verifies(tmp_path):
+    import sys
+    from pathlib import Path as _P
+
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "app"))
+    from components.transcript import build_transcript, load_entries
+
+    log = ConsensusLog("run-x", tmp_path)
+    log.append(0, "ORCHESTRATOR", "SETUP", {"a": 1})
+    log.append(2, "ORCHESTRATOR", "COMMIT", {"option_id": "OPT-1", "status": "CONSENSUS"})
+
+    resumed = ConsensusLog.resume(tmp_path)
+    entry = resumed.append(2, "HUMAN", "HUMAN_DECISION", {
+        "decision": "approve", "reason": "ok", "user": "duty_manager",
+        "timestamp": "2026-10-31T10:00:00Z", "option_id": "OPT-1",
+    })
+    assert entry.seq == 3
+    assert ConsensusLog.verify(tmp_path / "log.jsonl")
+    msgs = build_transcript(load_entries(tmp_path / "log.jsonl"))
+    assert msgs[-1]["speaker"] == "Duty manager" and "Approved OPT-1" in msgs[-1]["text"]
+
+
+def test_resume_refuses_tampered_log(tmp_path):
+    log = ConsensusLog("run-y", tmp_path)
+    log.append(0, "ORCHESTRATOR", "SETUP", {"a": 1})
+    path = tmp_path / "log.jsonl"
+    path.write_text(path.read_text().replace('"a":1', '"a":2'))
+    with pytest.raises(ValueError):
+        ConsensusLog.resume(tmp_path)

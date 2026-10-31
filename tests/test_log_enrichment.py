@@ -219,6 +219,9 @@ def test_usage_attached_to_proposal_and_perception_including_cache_hits(tmp_path
     assert perception.usage["ATC"]["cached"] is False
     fact = perception.payload["facts"][0]
     assert set(fact) >= {"key", "value", "source", "citation", "conservative_default"}
+    # no retrieved chunks -> the cited-nothing fact falls back, and the log says why
+    assert perception.payload["default_reason"].startswith("invalid_citation: closed_taxiways")
+    assert all("default_reason" not in e.payload for e in events(log1, "PERCEPTION") if e.actor != "ATC")
     # fake agents made no LLM call -> no usage, but still a PERCEPTION event
     assert len(events(log1, "PERCEPTION")) == 3
 

@@ -106,6 +106,7 @@ def test_perception_success_uses_llm_facts_and_valid_citation(monkeypatch):
     assert fact.value == ["A"]
     assert fact.citation is not None and fact.citation.chunk_id == "notam-1"
     assert fact.conservative_default is False
+    assert agent.perception_default_reason is None
     user = client.calls[0]["user"]
     assert '<source id="notam-1"' in user
     assert "<report kind=\"notam\">" in user
@@ -129,6 +130,7 @@ def test_perception_bad_citation_falls_back_to_conservative(monkeypatch):
     fact = next(f for f in agent.perceive(event.public) if f.key == "closed_taxiways")
     assert fact.source == "DEFAULT"
     assert fact.conservative_default is True
+    assert agent.perception_default_reason.startswith("invalid_citation: closed_taxiways cites ['invented-chunk']")
 
 
 def test_perception_low_confidence_falls_back(monkeypatch):
@@ -149,6 +151,7 @@ def test_perception_low_confidence_falls_back(monkeypatch):
     facts = {f.key: f for f in agent.perceive(event.public)}
     assert facts["turbulence"].source == "DEFAULT"
     assert facts["turbulence"].conservative_default is True
+    assert agent.perception_default_reason == "low_confidence: model confidence 0.20 < 0.6"
 
 
 def test_perception_exception_falls_back(monkeypatch):
@@ -160,6 +163,7 @@ def test_perception_exception_falls_back(monkeypatch):
     assert fact.source == "DEFAULT"
     assert fact.conservative_default is True
     assert fact.value["deferrable"] is False
+    assert agent.perception_default_reason == "llm_error: RuntimeError"
 
 
 def test_no_truth_fields_leak_into_prompts(monkeypatch):

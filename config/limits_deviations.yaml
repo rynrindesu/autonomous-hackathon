@@ -1,0 +1,15 @@
+# Every operational limit where Triad deliberately departs from the organisers' workbook
+# (challenge-2-operational-constraints.xlsx, imported into config/operational_limits.yaml).
+# Rules of play: "Any limit you change must be stated in your demo." -- this list is surfaced
+# in the SETUP log payload (triad.data.limits.limits_info) and in the UI.
+#
+# Entry shape: {limit, workbook_value, our_value, reason, citation}
+#
+# Currently EMPTY: every workbook limit is used as published.
+# Modelling choices that do NOT change a workbook limit (documented where they live):
+#   - arrival share of max_runway_ops_per_hour (config/synthetic.yaml atc.arrival_share_of_runway_ops)
+#   - REGIONAL jets use the workbook narrowbody holding burn; all WIDE types (incl. A380) the widebody burn
+#   - contingency = 5% of the remaining trip fuel at the decision point (AIRBORNE) / whole trip (GROUND)
+#   - modelled gate subset (carrier + common-use) of the workbook gate total; >= spare_gates_at_any_time kept free
+#   - ground crew base rate (config/costs.yaml ground_crew_base_eur_per_min), overtime = base x workbook 1.5
+deviations: []

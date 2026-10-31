@@ -7,7 +7,7 @@
 | `holding-delay-absorption.md` | FAA AIM 4-4-3 / 4-4-12 — holding instructions, EFC and speed control | https://www.faa.gov/air_traffic/publications/atpubs/aim_html/chap4_section_4.html | AIM Chapter 4, Section 4 | FAA AIM (US Government work, public domain) | no | yes |
 | `notam-decoding.md` | FAA NOTAM decoding guide — contractions, time groups and Q-codes | https://notams.aim.faa.gov/notamSearch/ | FAA domestic NOTAM format (paraphrased) | FAA Order JO 7930.2 / NOTAM Search (US Government work, public domain) | no | yes |
 | `airport-operations-notes.md` | Synthetic airport operations notes — taxiway closures and gate reachability | — | Triad synthetic corpus v1 | Team-written synthetic material | yes | no |
-| `eval.yaml` | Retrieval evaluation queries (18) | — | v1 | Team-written | — | — |
+| `eval.yaml` | Retrieval evaluation queries (19) | — | v2 | Team-written | — | — |
 
 Notes:
 - The wake minima table uses the unmodified ICAO J/H/M/L categories; the UK AIC

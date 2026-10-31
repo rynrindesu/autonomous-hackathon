@@ -328,7 +328,7 @@ def test_llm_failure_in_orchestrator_fails_over_to_stub(monkeypatch):
 
     resolution = orchestrator.run()
 
-    assert resolution.turn <= 2
+    assert resolution.turn <= 3
     failovers = [e for e in log.entries if e.event == "AGENT_FAILOVER"]
     assert any(e.payload["role"] == "ATC" and e.payload["turn"] == 1 for e in failovers)
     assert ConsensusLog.verify(log.entries)
@@ -357,6 +357,12 @@ def test_red_team_llm_pilot_cannot_commit_an_unsafe_option(monkeypatch):
                 "votes": [{"option_id": "OPT-01", "vote": "APPROVE"}],
                 "ranking": ["OPT-01"],
                 "rationale": "Approve the earliest option.",
+                "citations": [],
+            },
+            "pilot_turn3": {
+                "votes": [{"option_id": "OPT-01", "vote": "APPROVE"}],
+                "ranking": ["OPT-01"],
+                "rationale": "Still approve the earliest option.",
                 "citations": [],
             },
         }
@@ -438,3 +444,112 @@ def test_perception_salvages_citation_ids_from_notes(monkeypatch):
     assert fact.source == "LLM"
     assert fact.citation is not None
     assert fact.citation.chunk_id == "atc-notam-decoding-01"
+
+
+# --------------------------------------------------------------------------- turn 2 counter / turn 3
+
+
+def test_turn2_accepts_one_counter_on_a_disapproved_option():
+    event, agent = make_agent(AgentRole.ATC, ScriptedClient({}))
+    agent._facts = stub_perceive(AgentRole.ATC, event.public, event.atc)
+    patch_scores(agent, fail_ids=set())
+    agent.client.handlers["atc_turn2"] = {
+        "votes": [
+            {"option_id": "OPT-01", "vote": "DISAPPROVE", "reason": "THROUGHPUT: slot too late"},
+            {"option_id": "OPT-03", "vote": "APPROVE"},
+        ],
+        "ranking": ["OPT-03"],
+        "counter": {"base_option_id": "OPT-01", "changes": {"runway": "17L", "arrival_slot": "09:55"}},
+        "rationale": "OPT-01 works on the parallel runway.",
+    }
+
+    ballot = agent.turn2(event.public, [make_option("OPT-01"), make_option("OPT-03")], [])
+
+    assert ballot.turn == 2
+    assert ballot.counter_option is not None
+    assert ballot.counter_option.base_option_id == "OPT-01"
+    assert ballot.counter_option.changes == {"runway": "17L", "arrival_slot": 595}
+    assert "counter on OPT-01" in ballot.rationale
+    payload = agent.client.calls[-1]["user"]
+    assert '"decision": "TURN2"' in payload and "controllable_counter_fields" in payload
+    assert agent.usage_for("turn2") is not None
+
+
+def test_turn2_counter_on_an_approved_option_is_dropped():
+    event, agent = make_agent(AgentRole.ATC, ScriptedClient({}))
+    agent._facts = stub_perceive(AgentRole.ATC, event.public, event.atc)
+    patch_scores(agent, fail_ids=set())
+    agent.client.handlers["atc_turn2"] = {
+        "votes": [
+            {"option_id": "OPT-01", "vote": "APPROVE"},
+            {"option_id": "OPT-03", "vote": "APPROVE"},
+        ],
+        "ranking": ["OPT-01", "OPT-03"],
+        "counter": {"base_option_id": "OPT-01", "changes": {"runway": "17L"}},
+        "rationale": "Both fine.",
+    }
+
+    ballot = agent.turn2(event.public, [make_option("OPT-01"), make_option("OPT-03")], [])
+
+    assert ballot.counter_option is None
+    assert "dropped counter" in ballot.rationale
+
+
+def test_turn3_final_ballot_parses_votes_and_ignores_counters():
+    from triad.agents.llm_schemas import Turn3Decision
+    from triad.schemas import PublicSummary, Vote
+
+    event, agent = make_agent(AgentRole.ATC, ScriptedClient({}))
+    agent._facts = stub_perceive(AgentRole.ATC, event.public, event.atc)
+    patch_scores(agent, fail_ids={"OPT-04"})
+    agent.client.handlers["atc_turn3"] = {
+        "votes": [
+            {"option_id": "OPT-01", "vote": "APPROVE"},
+            {"option_id": "OPT-03", "vote": "DISAPPROVE", "reason": "HOLDING_STACK: 20 min hold"},
+            {"option_id": "OPT-04", "vote": "APPROVE"},
+        ],
+        "ranking": ["OPT-04", "OPT-01"],
+        "counter": {"base_option_id": "OPT-03", "changes": {"runway": "17L"}},
+        "rationale": "PILOT and GROUND approved OPT-01 in Turn 2, so I join them.",
+    }
+    summaries = [
+        PublicSummary(
+            sender=AgentRole.PILOT,
+            turn=2,
+            top_choice="OPT-01",
+            vetoed_option_ids=[],
+            objections=[],
+            votes=[Vote(option_id="OPT-01", vote="APPROVE"), Vote(option_id="OPT-03", vote="DISAPPROVE", reason="FUEL")],
+            rationale="OPT-01 is fine for fuel.",
+        )
+    ]
+    shortlist = [make_option("OPT-01"), make_option("OPT-03"), make_option("OPT-04")]
+
+    ballot = agent.turn3(event.public, shortlist, summaries, fallback_option=make_option("OPT-03"))
+
+    assert ballot.turn == 3
+    assert ballot.counter_option is None
+    votes = {v.option_id: v for v in ballot.votes}
+    assert votes["OPT-01"].vote == "APPROVE"
+    assert votes["OPT-03"].vote == "DISAPPROVE" and votes["OPT-03"].reason == "HOLDING_STACK"
+    assert votes["OPT-04"].vote == "DISAPPROVE" and votes["OPT-04"].reason == "ATC-TEST-01"
+    assert ballot.ranking == ["OPT-01"]
+    call = agent.client.calls[-1]
+    assert call["name"] == "atc_turn3" and call["out"] is Turn3Decision
+    assert '"decision": "TURN3"' in call["user"] and "LAST turn" in call["user"]
+    assert '"vote": "DISAPPROVE"' in call["user"] and "FUEL" in call["user"]
+    assert "controllable_counter_fields" not in call["user"]
+    assert agent.usage_for("turn3") is not None
+
+
+def test_ballot_rationale_drops_copied_approval_tags():
+    event, agent = make_agent(AgentRole.ATC, ScriptedClient({}))
+    agent._facts = stub_perceive(AgentRole.ATC, event.public, event.atc)
+    patch_scores(agent, fail_ids=set())
+    agent.client.handlers["atc_turn3"] = {
+        "votes": [{"option_id": "OPT-01", "vote": "APPROVE"}],
+        "ranking": ["OPT-01"],
+        "rationale": "OPT-01 is acceptable. [approves: OPT-06]",
+    }
+    ballot = agent.turn3(event.public, [make_option("OPT-01")], [])
+    assert ballot.rationale == "OPT-01 is acceptable. [approves: OPT-01]"

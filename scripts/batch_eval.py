@@ -106,7 +106,7 @@ def print_table(report: dict[str, Any]) -> None:
     errors = report["error_counts"]
     print(f"\nBatch eval: {report['n_rows']} rows, seed {report['seed']}, impl {report['impl']}")
     header = (
-        f"{'mode':<7} {'runs':>4} {'T1':>3} {'T2':>3} {'FB':>3} {'ESC':>3} {'err':>3} {'unsafe':>6} "
+        f"{'mode':<7} {'runs':>4} {'T1':>3} {'T2':>3} {'T3':>3} {'FB':>3} {'ESC':>3} {'err':>3} {'unsafe':>6} "
         f"{'feas>=2':>7} {'cost EUR':>9} {'hold':>5} {'fuel kg':>7} {'CO2 kg':>7} {'delay':>5} "
         f"{'missed':>6} {'OT':>4} {'NL':>4} {'chg%':>5} {'dCost':>7} {'veto y/t':>8}"
     )
@@ -119,7 +119,7 @@ def print_table(report: dict[str, Any]) -> None:
         dcost = _fmt(d["mean_cost_diff_eur"]) if d else "-"
         feas = f"{r['feasible_ge2_rate'] * 100:.0f}%" if r["feasible_ge2_rate"] is not None else "-"
         print(
-            f"{mode:<7} {r['n_runs']:>4} {o['TURN1']:>3} {o['TURN2']:>3} {o['FALLBACK']:>3} "
+            f"{mode:<7} {r['n_runs']:>4} {o['TURN1']:>3} {o['TURN2']:>3} {o.get('TURN3', 0):>3} {o['FALLBACK']:>3} "
             f"{o['ESCALATED']:>3} {errors.get(mode, 0):>3} {r['unsafe_commits']:>6} {feas:>7} "
             f"{_fmt(r['mean_total_cost_eur']):>9} {_fmt(r['mean_holding_min'], 1):>5} "
             f"{_fmt(r['mean_fuel_kg']):>7} {_fmt(r['mean_co2_kg']):>7} "

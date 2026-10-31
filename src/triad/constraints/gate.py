@@ -1,4 +1,6 @@
-"""Ground gate checks: size, occupancy overlap (with buffer) and carrier rights."""
+"""Ground gate checks: size, occupancy overlap (with buffer), carrier rights and
+gate-change notice (GND-GATE-04, workbook fuel_and_crew: a gate change must be
+notified at least 20 min before arrival)."""
 
 from __future__ import annotations
 
@@ -25,6 +27,58 @@ def _overlaps(gate: Gate, start: int, end: int, buffer_min: int) -> list[tuple[i
         if lo < occ_end and occ_start < hi:
             hits.append((int(occ_start), int(occ_end)))
     return hits
+
+
+def _gate_notice_check(
+    public: PublicEvent,
+    private: GroundPrivate,
+    option: CandidateOption,
+    next_id: Callable[[], str],
+) -> ConstraintCheck:
+    """GND-GATE-04: if the option changes the planned gate, the change is notified
+    at the decision time, which must be >= ``gate_change_notice_min`` before arrival."""
+
+    notice_min = int(private.gate_change_notice_min)
+    if is_divert(option):
+        return make_check(
+            constraint_id="GND-GATE-04",
+            owner="GROUND",
+            option=option,
+            next_id=next_id,
+            passed=True,
+            value="divert",
+            limit=notice_min,
+            unit="min notice",
+            detail="aircraft diverts to alternate; no destination gate change",
+        )
+    if option.gate == private.current_gate:
+        return make_check(
+            constraint_id="GND-GATE-04",
+            owner="GROUND",
+            option=option,
+            next_id=next_id,
+            passed=True,
+            value="no change",
+            limit=notice_min,
+            unit="min notice",
+            detail=f"planned gate {private.current_gate} kept; no notice needed",
+        )
+    notice = int(option.arrival_slot) - int(public.decision_time)
+    return make_check(
+        constraint_id="GND-GATE-04",
+        owner="GROUND",
+        option=option,
+        next_id=next_id,
+        passed=notice >= notice_min,
+        value=notice,
+        limit=notice_min,
+        unit="min notice",
+        detail=(
+            f"gate change {private.current_gate} -> {option.gate} notified at "
+            f"{public.decision_time}, {notice} min before arrival {option.arrival_slot} "
+            f"(minimum {notice_min})"
+        ),
+    )
 
 
 def check_gates(
@@ -71,6 +125,7 @@ def check_gates(
                 unit="carrier",
                 detail="aircraft diverts to alternate; destination gate not used",
             ),
+            _gate_notice_check(public, private, option, next_id),
         ]
 
     gate = _find_gate(private, option.gate)
@@ -95,6 +150,7 @@ def check_gates(
                     detail=detail,
                 )
             )
+        checks.append(_gate_notice_check(public, private, option, next_id))
         return checks
 
     aircraft_rank = _SIZE_RANK[public.aircraft.size_class]
@@ -152,4 +208,5 @@ def check_gates(
             ),
         )
     )
+    checks.append(_gate_notice_check(public, private, option, next_id))
     return checks

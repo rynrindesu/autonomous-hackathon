@@ -12,3 +12,7 @@ next_leg_delay_eur_per_min: 100       # same basis as arrival delay
 swap_aircraft_eur: 5000               # synthetic
 divert_eur: 25000                     # synthetic: diversion + recovery
 turbulence_moderate_eur: 500          # synthetic: crew/pax injury risk proxy
+# Ground turnaround team labour, normal time. ASSUMPTION (synthetic, no workbook figure): 8-person
+# ramp team x ~EUR 30/h fully-loaded labour cost = EUR 4.0/min. Overtime = base x workbook 1.5
+# (fuel_and_crew: "8 hours; overtime costs 1.5x after that") = EUR 6.0/min.
+ground_crew_base_eur_per_min: 4.0

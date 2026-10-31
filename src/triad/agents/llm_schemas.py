@@ -129,7 +129,24 @@ class VoteOut(LLMModel):
     reason: str | None = Field(default=None, json_schema_extra=_REASON_LIMIT)
 
 
+TURN2_COUNTER_DESCRIPTION = (
+    "Optional: at most one revised option, based on a shortlisted option you DISAPPROVE in this "
+    "ballot, changing only your controllable fields. Use null for no counter."
+)
+
+
 class Turn2Decision(LLMModel):
+    analysis: str = Field(default="", description=ANALYSIS_DESCRIPTION, json_schema_extra=_TEXT_LIMIT)
+    votes: list[VoteOut] = Field(default_factory=list)
+    ranking: list[str] = Field(default_factory=list)
+    counter: CounterOut | None = Field(default=None, description=TURN2_COUNTER_DESCRIPTION)
+    rationale: str = Field(description=RATIONALE_DESCRIPTION, json_schema_extra=_TEXT_LIMIT)
+    citations: list[str] = Field(default_factory=list)
+
+
+class Turn3Decision(LLMModel):
+    """Final ballot: votes + ranking only; no counter-options, no new options."""
+
     analysis: str = Field(default="", description=ANALYSIS_DESCRIPTION, json_schema_extra=_TEXT_LIMIT)
     votes: list[VoteOut] = Field(default_factory=list)
     ranking: list[str] = Field(default_factory=list)
@@ -154,6 +171,8 @@ __all__ = [
     "Turn1Decision",
     "VoteOut",
     "Turn2Decision",
+    "Turn3Decision",
+    "TURN2_COUNTER_DESCRIPTION",
     "PERCEPTION_SCHEMAS",
     "TurbulenceLevel",
     "MelCategory",

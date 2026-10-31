@@ -54,7 +54,7 @@ def _flight(**overrides: Any) -> FlightRecord:
     return FlightRecord(**data)
 
 
-def _aircraft(wake: str = "M", size: str = "NARROW", cruise: float = 40, hold: float = 35) -> AircraftInfo:
+def _aircraft(wake: str = "M", size: str = "NARROW", cruise: float = 40, hold: float = 40) -> AircraftInfo:
     return AircraftInfo(
         type_code="B738",
         wake=WakeCat(wake),
@@ -135,13 +135,16 @@ def test_wake_heavy_to_medium_fails_at_four_point_five_nm() -> None:
 
 
 def _pilot_private() -> PilotPrivate:
+    # Workbook fuel_and_crew, narrowbody holding 40 kg/min: trip 2400 + contingency 5% (120)
+    # + final reserve 30 min (1200) + spare 45 min (1800) = 5520 kg on board.
     return PilotPrivate(
-        fuel_on_board_kg=5300.0,
+        fuel_on_board_kg=5520.0,
         fuel_to_destination_kg=2400.0,
         alternate="OKC",
         alternate_distance_nm=100.0,
         fuel_to_alternate_kg=400.0,
-        reserve_45_kg=1800.0,
+        final_reserve_kg=1200.0,
+        contingency_kg=120.0,
         max_extra_fuel_kg=0.0,
         cruise_levels=[340],
         turbulence_text=[],
@@ -156,14 +159,17 @@ def test_fuel_boundary_pass_and_fail() -> None:
     public = _public(mode=Mode.AIRBORNE, expected_eta=1000, decision_time=940)
     private = _pilot_private()
 
-    pass_option = _option(arrival_slot=1010, holding_min=10)
+    # 45 min spare + 120 kg contingency (3 min) -> 48 min of holding above the final reserve.
+    pass_option = _option(arrival_slot=1045, holding_min=45)
     passing = check_fuel(public, private, {}, pass_option, CheckIdGen("F"))
     assert all(c.passed for c in passing)
     assert passing[0].constraint_id == "PLT-FUEL-01"
+    assert passing[0].limit == 1200.0  # final reserve = 30 min x 40 kg/min
+    assert passing[0].source == "challenge-2 workbook: fuel_and_crew"
     assert passing[1].constraint_id == "PLT-FUEL-02"
-    assert passing[1].limit == 20.0
+    assert passing[1].limit == 48.0
 
-    fail_option = _option(arrival_slot=1025, holding_min=25)
+    fail_option = _option(arrival_slot=1050, holding_min=50)
     failing = check_fuel(public, private, {}, fail_option, CheckIdGen("F"))
     assert failing[0].passed is False
     assert failing[1].passed is False

@@ -172,7 +172,9 @@ class CrewShift(Model):
     start: int
     end: int  # normal end; work beyond => overtime
     hard_limit_end: int  # company/labour hard limit
-    overtime_eur_per_min: float
+    overtime_eur_per_min: float  # = base_eur_per_min * overtime_multiplier
+    base_eur_per_min: float = 0.0  # normal-time rate
+    overtime_multiplier: float = 1.5  # workbook fuel_and_crew: overtime costs 1.5x after 8 h
 
 
 class DefectReport(Model):
@@ -206,8 +208,10 @@ class PublicEvent(Model):
 
 
 class AtcPrivate(Model):
-    aar_normal: int
-    aar_reduced: int
+    aar_normal: int  # arrivals/hour in normal conditions (workbook: max_runway_ops_per_hour baseline)
+    aar_reduced: int  # arrivals/hour after the disruption (e.g. weather-reduced)
+    max_runway_ops_per_hour: int | None = None  # workbook airport_capacity (all runways, arr+dep)
+    active_runways: int | None = None  # workbook airport_capacity
     slots: list[ArrivalSlot]
     notam_text: list[str]
     truth_closed_taxiways: list[str] = []  # stub perception / eval only
@@ -219,25 +223,31 @@ class PilotPrivate(Model):
     alternate: str
     alternate_distance_nm: float
     fuel_to_alternate_kg: float
-    reserve_45_kg: float  # 45 min at normal cruise burn (14 CFR 121.639)
+    final_reserve_kg: float  # workbook fuel_and_crew: 30 min of holding fuel; never plan below this
+    contingency_kg: float = 0.0  # workbook fuel_and_crew: 5% of trip fuel
     max_extra_fuel_kg: float  # GROUND mode: tank/MTOW headroom for extra uplift
     cruise_levels: list[int]  # candidate flight levels, e.g. [320, 340, 360]
     turbulence_text: list[str]
     truth_turbulence: dict[str, Literal["NONE", "LIGHT", "MODERATE", "SEVERE"]] = {}  # "FL340" -> level
     connections: list[Connection]
     pax_notes: list[str] = []
-    crew_duty_remaining_min: int
+    crew_duty_remaining_min: int  # derived: report_time + max_duty - decision_time
+    crew_report_time: int | None = None  # minutes of day the flight crew reported
+    crew_max_duty_min: int = 780  # workbook fuel_and_crew: 13 h from report (simplified Part 117)
 
 
 class GroundPrivate(Model):
     gates: list[Gate]
     current_gate: str  # originally planned destination gate
     shifts: list[CrewShift]
-    min_turnaround_min: int
+    min_turnaround_min: int  # workbook airport_capacity (destination airport)
     next_leg: NextLeg | None
     defect: DefectReport | None = None
     spare_aircraft_available: bool = False
     gate_change_eur: float
+    gate_change_notice_min: int = 20  # workbook fuel_and_crew: gate change notice >= 20 min before arrival
+    total_gates: int | None = None  # workbook airport_capacity
+    spare_gates_at_any_time: int = 0  # workbook airport_capacity
 
 
 class DisruptionEvent(Model):
@@ -337,31 +347,41 @@ class Vote(Model):
 
 
 class BallotMessage(Model):
+    """Turn 2 (BALLOT) and Turn 3 (FINAL BALLOT).
+
+    Turn 2 may carry at most one counter-option, based on an option the sender DISAPPROVED
+    (validated in code by shared checks + all three checkers before it can enter Turn 3).
+    Turn 3 must not carry a counter-option.
+    """
+
     run_id: str
-    turn: Literal[2] = 2
+    turn: Literal[2, 3] = 2
     sender: AgentRole
     type: Literal["BALLOT"] = "BALLOT"
     votes: list[Vote]  # exactly one per shortlisted option
     ranking: list[str]  # approved option ids, best first
+    counter_option: CounterOption | None = None  # Turn 2 only
     citations: list[Citation] = []
     rationale: str
 
 
 class PublicSummary(Model):
-    """What other agents may learn from an agent's Turn 1 message (no private values)."""
+    """What other agents may learn from an agent's previous-turn message (no private values)."""
 
     sender: AgentRole
+    turn: int = 1  # turn the summary describes
     top_choice: str | None
     vetoed_option_ids: list[str]
     objections: list[Objection]
     counter_option_id: str | None = None
+    votes: list[Vote] = []  # Turn 2 summaries: the sender's public votes + reasons
     rationale: str
 
 
 class Resolution(Model):
     run_id: str
     status: Literal["CONSENSUS", "FALLBACK", "ESCALATED"]
-    turn: int  # 1 or 2 (0 if escalated at setup)
+    turn: int  # 1, 2 or 3 (0 if escalated at setup)
     decided_by: Literal["AGENTS", "FALLBACK", "HUMAN_ESCALATION"]
     option: CandidateOption | None
     reason: str
@@ -379,8 +399,9 @@ class LogEntry(Model):
     run_id: str
     turn: int  # 0 = setup
     actor: Literal["ORCHESTRATOR", "ATC", "PILOT", "GROUND", "FALLBACK"]
-    event: str  # SETUP, OPTIONS_GENERATED, PROPOSAL, COUNTER_VALIDATED, SHORTLIST, BALLOT,
-    #           CONSENSUS_REACHED, FALLBACK_INVOKED, SAFETY_BLOCK, AGENT_FAILOVER, ESCALATED, COMMIT
+    event: str  # SETUP, OPTIONS_GENERATED, TURN_START, PERCEPTION, PROPOSAL, COUNTER_VALIDATED,
+    #           COUNTER_REJECTED, SHORTLIST, BALLOT, CONSENSUS_REACHED, FALLBACK_INVOKED, SAFETY_BLOCK,
+    #           AGENT_FAILOVER, ESCALATED, COMMIT_GATE, COMMIT
     payload: dict[str, Any]
     payload_sha256: str
     prev_sha256: str

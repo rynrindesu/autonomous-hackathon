@@ -20,6 +20,7 @@ from triad.agents.llm_schemas import (
     PERCEPTION_SCHEMAS,
     Turn1Decision,
     Turn2Decision,
+    Turn3Decision,
 )
 from triad.agents.perception import conservative_facts, stub_perceive
 from triad.agents.stub import red_team_ranking, red_team_votes
@@ -67,6 +68,7 @@ _INJECTION_PATTERNS = (
     ("override", re.compile(r"\boverrid(?:e|ing)\b", re.IGNORECASE)),
     ("no matter what", re.compile(r"\bno\s+matter\s+what\b", re.IGNORECASE)),
 )
+_APPROVES_TAG = re.compile(r"\[(?:LLM )?approv(?:es|ed)?:[^\]]*\]", re.IGNORECASE)
 _SENTENCE_END = re.compile(r"[.!?](?=[\s\"')\]]|$)")
 _HHMM = re.compile(r"^\s*(\d{1,2}):(\d{2})(?:\s*\+\s*(\d+))?\s*$")
 _TIME_FIELDS = ("arrival_slot", "departure_slot")
@@ -221,7 +223,7 @@ class LLMAgent(BaseAgent):
         self.last_usage = clean
 
     def usage_for(self, label: str) -> dict[str, Any] | None:
-        """Usage of this agent's most recent LLM call with ``label`` (perceive/turn1/turn2)."""
+        """Usage of this agent's most recent LLM call with ``label`` (perceive/turn1/turn2/turn3)."""
         return self.call_usage.get(label)
 
     def _reports(self) -> list[tuple[str, str]]:
@@ -598,6 +600,8 @@ class LLMAgent(BaseAgent):
         public: PublicEvent,
         decision: Any,
         by_id: dict[str, CandidateOption],
+        *,
+        suffix: int = 1,
     ) -> tuple[CounterOption | None, str]:
         if decision is None:
             return None, ""
@@ -620,7 +624,7 @@ class LLMAgent(BaseAgent):
         data = base.model_dump()
         data.update(changes)
         data.update(
-            option_id=f"CTR-{self.role.value}-1",
+            option_id=f"CTR-{self.role.value}-{suffix}",
             origin="COUNTER",
             proposed_by=self.role,
             base_option_id=base.option_id,
@@ -633,7 +637,7 @@ class LLMAgent(BaseAgent):
             return None, "dropped counter: failed own hard check"
         return CounterOption(base_option_id=base.option_id, changes=changes), ""
 
-    # ------------------------------------------------------------------ turn 2
+    # ------------------------------------------------------------------ turn 2 / turn 3
     def turn2(
         self,
         public: PublicEvent,
@@ -641,6 +645,27 @@ class LLMAgent(BaseAgent):
         summaries: list[PublicSummary],
         *,
         fallback_option: CandidateOption | None = None,
+    ) -> BallotMessage:
+        return self._ballot_turn(2, public, shortlist, summaries, fallback_option)
+
+    def turn3(
+        self,
+        public: PublicEvent,
+        shortlist: list[CandidateOption],
+        summaries: list[PublicSummary],
+        *,
+        fallback_option: CandidateOption | None = None,
+    ) -> BallotMessage:
+        """Final ballot after seeing the other agents' Turn 2 votes/reasons. No counters."""
+        return self._ballot_turn(3, public, shortlist, summaries, fallback_option)
+
+    def _ballot_turn(
+        self,
+        turn: int,
+        public: PublicEvent,
+        shortlist: list[CandidateOption],
+        summaries: list[PublicSummary],
+        fallback_option: CandidateOption | None,
     ) -> BallotMessage:
         self.last_usage = None
         facts = self.perceive(public)
@@ -654,7 +679,8 @@ class LLMAgent(BaseAgent):
             self.utility(public, fallback_option) if fallback_option is not None else None
         )
 
-        decision, usage = self._decide_turn2(
+        decision, usage = self._decide_ballot(
+            turn,
             public,
             shortlist,
             utility,
@@ -666,7 +692,7 @@ class LLMAgent(BaseAgent):
             fallback_option,
             fallback_utility,
         )
-        self._record(usage, "turn2")
+        self._record(usage, f"turn{turn}")
 
         by_vote: dict[str, Any] = {}
         for vote in decision.votes:
@@ -700,16 +726,38 @@ class LLMAgent(BaseAgent):
             if oid not in ranking:
                 ranking.append(oid)
 
+        counter: CounterOption | None = None
+        counter_note = ""
+        raw_counter = getattr(decision, "counter", None) if turn == 2 else None
+        if raw_counter is not None:
+            disapproved = {v.option_id for v in votes if v.vote == "DISAPPROVE"}
+            if raw_counter.base_option_id not in disapproved:
+                counter_note = "dropped counter: base option is not one you disapproved"
+            else:
+                counter, counter_note = self._counter(
+                    public, raw_counter, {o.option_id: o for o in shortlist}, suffix=2
+                )
+
         summary = f"[approves: {', '.join(ranking) if ranking else 'none'}]"
-        llm_text = trim_rationale(decision.rationale)
+        # code appends its own summary tag; drop any tag the model copied from other agents
+        llm_text = trim_rationale(" ".join(_APPROVES_TAG.sub(" ", str(decision.rationale or "")).split()))
         rationale = f"{llm_text} {summary}" if llm_text else f"{self.role.value} {summary}"
         if free_text:
             rationale = f"{rationale} | free-text reasons: " + "; ".join(free_text)
+        if counter is not None:
+            rationale = (
+                f"{rationale} [counter on {counter.base_option_id}: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(counter.changes.items()))
+                + "]"
+            )
+        elif counter_note:
+            rationale = f"{rationale} [{counter_note}]"
 
         if self.red_team:
             compromised = red_team_votes([o.option_id for o in shortlist], self._unsafe_ids)
             if compromised is not None:
                 votes, ranking, target = compromised
+                counter = None
                 rationale = (
                     f"{rationale.replace('[approves:', '[LLM approved:', 1)} "
                     f"[COMPROMISED AGENT: ballot replaced; approve {target} regardless of checks]"
@@ -717,15 +765,29 @@ class LLMAgent(BaseAgent):
 
         return BallotMessage(
             run_id=public.run_id,
+            turn=turn,  # type: ignore[arg-type]
             sender=self.role,
             votes=votes,
             ranking=ranking,
+            counter_option=counter,
             citations=self._union_citations(facts, decision.citations),
             rationale=rationale,
         )
 
-    def _decide_turn2(
+    def _decide_turn2(self, *args: Any) -> tuple[Turn2Decision, dict[str, Any]]:
+        """Backwards-compatible wrapper (Turn 2 decision call)."""
+        return self._decide_ballot(2, *args)  # type: ignore[return-value]
+
+    @staticmethod
+    def _summary_payload(summary: PublicSummary) -> dict[str, Any]:
+        data = summary.model_dump(mode="json")
+        if not data.get("votes"):
+            data.pop("votes", None)
+        return data
+
+    def _decide_ballot(
         self,
+        turn: int,
         public: PublicEvent,
         shortlist: list[CandidateOption],
         utility: dict[str, float],
@@ -736,7 +798,7 @@ class LLMAgent(BaseAgent):
         facts: list[PerceivedFact],
         fallback_option: CandidateOption | None,
         fallback_utility: float | None,
-    ) -> tuple[Turn2Decision, dict[str, Any]]:
+    ) -> tuple[Turn2Decision | Turn3Decision, dict[str, Any]]:
         table = []
         for option in shortlist:
             oid = option.option_id
@@ -760,6 +822,8 @@ class LLMAgent(BaseAgent):
                 "accept, in particular any option at least as good for you as the fallback. "
                 "DISAPPROVE only with a specific objection category and a concrete reason."
             )
+            if turn == 3:
+                rule = "This is the LAST turn. " + rule
             projection = {
                 "option_id": fallback_id,
                 "arrival_slot": fmt_hhmm(fallback_option.arrival_slot),
@@ -768,28 +832,43 @@ class LLMAgent(BaseAgent):
             }
         else:
             projection = {"option_id": None, "your_utility": None, "rule": "No fallback projection."}
-        payload = {
-            "decision": "TURN2",
-            "task": (
+        if turn == 2:
+            task = (
                 "Turn 2: APPROVE or DISAPPROVE every shortlisted option (with a reason for "
-                "DISAPPROVE) and rank the ones you approve. No new options."
-            ),
+                "DISAPPROVE) and rank the ones you approve. Optionally propose ONE counter-option "
+                "(`counter`) that revises a shortlisted option you DISAPPROVE, changing only your "
+                "controllable fields; code validates it against every agent's hard checks and, if "
+                "valid, it enters the Turn 3 final ballot. Otherwise set `counter` to null."
+            )
+        else:
+            task = (
+                "Turn 3 (FINAL BALLOT): last chance for consensus. `other_agents` shows the other "
+                "agents' Turn 2 votes and reasons. APPROVE or DISAPPROVE every option on this "
+                "narrowed shortlist (with a reason for DISAPPROVE) and rank the ones you approve. "
+                "No counter-options and no new options. If no option is approved by all three, "
+                "the deterministic fallback decides."
+            )
+        payload = {
+            "decision": f"TURN{turn}",
+            "task": task,
             "run_id": public.run_id,
             "mode": public.mode.value,
             "time_format": "clock times are HH:MM local; '+1' means next day",
             "expected_eta": fmt_hhmm(public.expected_eta),
             "shortlist": table,
             "fallback_projection": projection,
-            "other_agents": [summary.model_dump(mode="json") for summary in summaries],
+            "other_agents": [self._summary_payload(summary) for summary in summaries],
             "perceived_facts": self._facts_payload(facts),
             "reason_format": "DISAPPROVE reason must start with an objection category, e.g. 'FUEL: extra burn exceeds reserve'.",
         }
+        if turn == 2:
+            payload["controllable_counter_fields"] = sorted(_COUNTER_FIELDS[self.role])
         system = load_prompt(f"{self.role.value.lower()}_decide")
         return self.client.complete_json(
             system,
             json.dumps(payload, sort_keys=True, default=str),
-            Turn2Decision,
-            name=f"{self.role.value.lower()}_turn2",
+            Turn2Decision if turn == 2 else Turn3Decision,
+            name=f"{self.role.value.lower()}_turn{turn}",
         )
 
     def _reason_category(

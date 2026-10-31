@@ -14,7 +14,7 @@ from triad.baseline import FCFS_REASON, fcfs_resolution, run_fcfs
 from triad.constraints.shared import shared_checks
 from triad.data.enrich import build_event
 from triad.data.loader import get_record
-from triad.metrics import RunMetrics, aggregate, negotiation_delta, run_metrics, veto_counts
+from triad.metrics import RunMetrics, aggregate, negotiation_delta, outcome_of, run_metrics, veto_counts
 from triad.options.generator import generate_options
 from triad.runner import run_scenario
 from triad.schemas import AgentRole, CandidateOption, ConstraintCheck, Mode, Resolution
@@ -35,8 +35,8 @@ def _metrics(run_id: str, outcome: str, option_id: str | None = "OPT-01", cost: 
     return RunMetrics(
         run_id=run_id,
         outcome=outcome,
-        status={"TURN1": "CONSENSUS", "TURN2": "CONSENSUS"}.get(outcome, outcome),
-        turn=2 if outcome == "TURN2" else 1,
+        status={"TURN1": "CONSENSUS", "TURN2": "CONSENSUS", "TURN3": "CONSENSUS"}.get(outcome, outcome),
+        turn={"TURN2": 2, "TURN3": 3, "FALLBACK": 3}.get(outcome, 1),
         option_id=option_id,
         total_cost_eur=cost,
         **kw,
@@ -48,7 +48,7 @@ def test_run_metrics_on_real_stub_run(demo):
     m = run_metrics(resolution, log, event=event, agents=agents, label="stub")
 
     assert resolution.option is not None
-    expected_outcome = "TURN1" if resolution.turn == 1 else "TURN2"
+    expected_outcome = {1: "TURN1", 2: "TURN2", 3: "TURN3"}[resolution.turn]
     assert m.outcome == (expected_outcome if resolution.status == "CONSENSUS" else "FALLBACK")
     assert m.unsafe_commit is False
     assert m.option_id == resolution.option.option_id
@@ -107,13 +107,25 @@ def test_aggregate_histogram_and_safety():
         _metrics("c", "TURN2", n_feasible=1),
         _metrics("d", "FALLBACK", cost=300.0),
         _metrics("e", "ESCALATED", option_id=None, cost=None, n_feasible=0),
+        _metrics("f", "TURN3", cost=0.0),
     ]
     report = aggregate(runs, label="x")
-    assert report.n_runs == 5
-    assert report.outcomes == {"TURN1": 1, "TURN2": 2, "FALLBACK": 1, "ESCALATED": 1}
+    assert report.n_runs == 6
+    assert report.outcomes == {"TURN1": 1, "TURN2": 2, "TURN3": 1, "FALLBACK": 1, "ESCALATED": 1}
+    assert report.turns_histogram == {"1": 2, "2": 2, "3": 2}
     assert report.unsafe_commits == 0
     assert report.feasible_ge2_rate == pytest.approx(1 / 3, abs=1e-3)
-    assert report.mean_total_cost_eur == pytest.approx(150.0)
+    assert report.mean_total_cost_eur == pytest.approx(120.0)
+
+
+def test_outcome_label_for_each_turn():
+    option = CandidateOption(option_id="OPT-01", mode=Mode.AIRBORNE, arrival_slot=600, runway="17C", gate="A1")
+    base = Resolution(run_id="r", status="CONSENSUS", turn=1, decided_by="AGENTS", option=option, reason="x")
+    assert outcome_of(base) == "TURN1"
+    assert outcome_of(base.model_copy(update={"turn": 2})) == "TURN2"
+    assert outcome_of(base.model_copy(update={"turn": 3})) == "TURN3"
+    fallback = base.model_copy(update={"turn": 3, "status": "FALLBACK", "decided_by": "FALLBACK"})
+    assert outcome_of(fallback) == "FALLBACK"
 
 
 def test_negotiation_delta_identical_is_zero():

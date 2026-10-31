@@ -89,6 +89,20 @@ def public_runway_default(public: PublicEvent) -> str | None:
 # --------------------------------------------------------------------------- ATC checks
 
 
+def clock_hour(slot_time: int) -> int:
+    """Clock-hour bucket of a slot time (minutes since midnight; >=1440 = next day)."""
+
+    return int(slot_time) // 60
+
+
+def booked_in_hour(slots: list[ArrivalSlot], slot_time: int) -> int:
+    """Arrival slots already allocated to other traffic in ``slot_time``'s clock hour
+    (all active runways)."""
+
+    hour = clock_hour(slot_time)
+    return sum(1 for s in slots if s.taken and clock_hour(s.slot_time) == hour)
+
+
 def check_runway(
     public: PublicEvent,
     private: AtcPrivate,
@@ -96,7 +110,8 @@ def check_runway(
     option: CandidateOption,
     next_id,
 ) -> list[ConstraintCheck]:
-    """ATC-RWY-01: the chosen arrival slot exists and is not already allocated."""
+    """ATC-RWY-01: the slot exists, is not allocated, and its clock hour is below the
+    (weather-reduced) arrival rate derived from the workbook max_runway_ops_per_hour."""
 
     from triad.constraints.shared import is_divert, make_check
 
@@ -110,21 +125,38 @@ def check_runway(
                 passed=True,
                 value="divert",
                 limit="n/a",
-                unit="slot",
+                unit="arrivals/h",
                 detail="divert to alternate: destination slot not used",
             )
         ]
 
+    cap = int(private.aar_reduced)
+    hour = clock_hour(option.arrival_slot)
+    hh = f"{hour % 24:02d}:00"
     slot = find_slot(private.slots, option.runway, option.arrival_slot)
-    passed = slot is not None and not slot.taken
+    booked = booked_in_hour(private.slots, option.arrival_slot)
+    ops = (
+        f" (from workbook {private.max_runway_ops_per_hour} runway ops/h)"
+        if private.max_runway_ops_per_hour
+        else ""
+    )
     if slot is None:
-        value: str | float = "missing"
+        passed = False
         detail = f"no slot at {option.arrival_slot} on {option.runway}"
-    else:
-        value = "taken" if slot.taken else "free"
+    elif booked >= cap:
+        passed = False
         detail = (
-            f"slot {option.arrival_slot} on {option.runway} is "
-            f"{'already allocated' if slot.taken else 'available'}"
+            f"hour {hh} at capacity: {booked} slots already allocated, reduced arrival "
+            f"rate {cap}/h{ops}"
+        )
+    elif slot.taken:
+        passed = False
+        detail = f"slot {option.arrival_slot} on {option.runway} already allocated to other traffic"
+    else:
+        passed = True
+        detail = (
+            f"slot {option.arrival_slot} on {option.runway} free; hour {hh} would have "
+            f"{booked + 1} of {cap} arrivals/h{ops}"
         )
     return [
         make_check(
@@ -133,9 +165,9 @@ def check_runway(
             option=option,
             next_id=next_id,
             passed=passed,
-            value=value,
-            limit=f"AAR {private.aar_reduced}/h",
-            unit="slot",
+            value=booked + 1,
+            limit=cap,
+            unit="arrivals/h",
             detail=detail,
         )
     ]

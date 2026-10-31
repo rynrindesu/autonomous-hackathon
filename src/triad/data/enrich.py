@@ -1,5 +1,9 @@
 """Seeded scenario builder: real DOT data + labelled synthetic context.
 
+Operational limits (runways, arrival capacity, gates, turnaround, fuel, flight
+and ground crew) come from the organisers' Challenge #2 workbook via
+``triad.data.limits`` (config/operational_limits.yaml).
+
 Everything here is deterministic for ``(row, seed)``.  The same inputs always
 produce an identical ``DisruptionEvent`` JSON.  Synthetic values are seeded from
 a SHA-256 of the config salt, the row's run id and the caller's seed -- never
@@ -20,6 +24,7 @@ import pandas as pd
 
 from triad.config import load_yaml
 from triad.constraints.runway import slot_grid_start, taxi_route_for
+from triad.data.limits import AirportLimits, airport_limits, fuel_crew
 from triad.data.loader import airport_coords, load_flights
 from triad.data.scenario import disruption_type_for, mode_for
 from triad.schemas import (
@@ -46,9 +51,12 @@ from triad.schemas import (
 # --------------------------------------------------------------------------- seeded RNG
 
 
-def _rng(rec: FlightRecord, seed: int) -> random.Random:
+def _rng(rec: FlightRecord, seed: int, stream: str = "") -> random.Random:
+    """Seeded RNG; a named ``stream`` gives an independent sub-stream so that, e.g.,
+    the traffic model can change without reshuffling every other synthetic draw."""
+
     salt = str(load_yaml("synthetic").get("seed_salt", "triad-v1"))
-    payload = f"{salt}|{rec.run_id}|{seed}"
+    payload = f"{salt}|{rec.run_id}|{seed}" + (f"|{stream}" if stream else "")
     digest = hashlib.sha256(payload.encode()).hexdigest()
     return random.Random(int(digest, 16))
 
@@ -98,6 +106,7 @@ def _index() -> dict[str, Any]:
     next_groups = positions.groupby([tail, date], sort=False).indices
     arr_groups = positions.groupby([airline, dest, date], sort=False).indices
     dep_groups = positions.groupby([airline, origin, date], sort=False).indices
+    dest_groups = positions.groupby([dest, date], sort=False).indices
 
     # Carrier service counts (arrival + departure movements).
     out_counts = df.groupby(["AIRLINE", "DESTINATION_AIRPORT"]).size()
@@ -125,6 +134,7 @@ def _index() -> dict[str, Any]:
         "next_groups": next_groups,
         "arr_groups": arr_groups,
         "dep_groups": dep_groups,
+        "dest_groups": dest_groups,
         "carrier_counts": carrier_counts,
         "airline_airports": airline_airports,
     }
@@ -149,21 +159,31 @@ def _aircraft(rec: FlightRecord, rng: random.Random, cfg: dict[str, Any]) -> Air
         choices = cfg["airline_types"].get(rec.airline) or ["B738"]
         code = rng.choice(choices)
     spec = specs[code]
+    size = SizeClass(spec["size"])
     return AircraftInfo(
         type_code=code,
         wake=WakeCat(spec["wake"]),
-        size_class=SizeClass(spec["size"]),
+        size_class=size,
         seats=int(spec["seats"]),
         approach_speed_kt=int(spec["vapp_kt"]),
         cruise_burn_kg_min=float(spec["cruise_kg_min"]),
-        holding_burn_kg_min=float(spec["hold_kg_min"]),
+        # Workbook fuel_and_crew: narrowbody 2,400 kg/h (REGIONAL+NARROW), widebody 6,500 kg/h.
+        holding_burn_kg_min=round(fuel_crew().holding_burn_kg_min(size), 4),
     )
 
 
-def _active_runways(destination: str, rng: random.Random, runway_cfg: dict[str, Any]) -> list[str]:
+def _active_runways(
+    destination: str,
+    rng: random.Random,
+    runway_cfg: dict[str, Any],
+    limits: AirportLimits,
+) -> list[str]:
+    """Active arrival runway ends: workbook ``active_runways`` (mixed-mode), bounded
+    by the runways listed for the airport in config/runways.yaml."""
+
     pairs = runway_cfg.get("airports", {}).get(destination, runway_cfg.get("default", ["09/27"]))
     pairs = list(pairs)
-    count = min(3, len(pairs))
+    count = max(1, min(int(limits.active_runways), len(pairs)))
     selected = rng.sample(pairs, count)
     active: list[str] = []
     for pair in selected:
@@ -215,10 +235,23 @@ def _notam_text(destination: str, rec: FlightRecord, closed: list[str], rng: ran
     ]
 
 
+def _real_arrivals_by_hour(rec: FlightRecord) -> Counter[int]:
+    """Real same-airport arrivals (all carriers) in flights.csv per clock hour."""
+
+    idx = _index()
+    positions = idx["dest_groups"].get((rec.destination, _date_key(rec)))
+    if positions is None:
+        return Counter()
+    positions = np.asarray(positions)
+    positions = positions[positions != rec.row_index]
+    return Counter(int(t) // 60 for t in idx["sarr"][positions])
+
+
 def _slots(
+    rec: FlightRecord,
     active: list[str],
     expected_eta: int,
-    private_aar: int,
+    aar_reduced: int,
     cfg: dict[str, Any],
     rng: random.Random,
     specs: dict[str, Any],
@@ -226,28 +259,61 @@ def _slots(
     grid_start: int | None = None,
     span_min: int | None = None,
 ) -> list[ArrivalSlot]:
+    """5-minute arrival slots over whole clock hours, with seeded background traffic.
+
+    Per clock hour the background traffic is ``max(real same-airport arrivals in
+    flights.csv, (U(background_util_range) - decay x hours after the ETA hour) x
+    aar_reduced)``.  If it reaches the
+    (reduced) arrival rate the hour is AT CAPACITY and every slot in it is taken;
+    otherwise that many slots are allocated at seeded positions.  ATC-RWY-01 enforces the hourly cap on top of ``taken``.
+    """
+
     atc_cfg = cfg["atc"]
     base = slot_grid_start(expected_eta, 5) if grid_start is None else int(grid_start)
     horizon = int(atc_cfg["slot_horizon_min"]) if span_min is None else int(span_min)
-    taken_frac = float(atc_cfg["taken_slot_frac"])
+    phase = base % 5  # GROUND grids follow departure grid + block time (not always :00/:05)
+    first_hour = base // 60
+    last_hour = (base + horizon) // 60
+    util_lo, util_hi = (float(x) for x in atc_cfg["background_util_range"])
+    decay = float(atc_cfg.get("background_decay_per_hour", 0.0))
+    eta_hour = int(expected_eta) // 60
     mix = cfg["leader_type_mix"]
     codes = [str(item[0]) for item in mix]
     weights = [float(item[1]) for item in mix]
+    real_by_hour = _real_arrivals_by_hour(rec)
 
     slots: list[ArrivalSlot] = []
-    for runway in active:
-        for slot_time in range(base, base + horizon + 1, 5):
-            leader = rng.choices(codes, weights=weights, k=1)[0]
-            spec = specs[leader]
-            sl = ArrivalSlot(
-                slot_time=slot_time,
-                runway=runway,
-                leader_type=leader,
-                leader_wake=WakeCat(spec["wake"]),
-                gap_nm=round(rng.uniform(3.0, 9.0), 1),
-                taken=rng.random() < taken_frac,
-            )
-            slots.append(sl)
+    for hour in range(first_hour, last_hour + 1):
+        times = list(range(hour * 60 + phase, hour * 60 + 60, 5))
+        hour_slots: list[ArrivalSlot] = []
+        for runway in active:
+            for slot_time in times:
+                leader = rng.choices(codes, weights=weights, k=1)[0]
+                spec = specs[leader]
+                hour_slots.append(
+                    ArrivalSlot(
+                        slot_time=slot_time,
+                        runway=runway,
+                        leader_type=leader,
+                        leader_wake=WakeCat(spec["wake"]),
+                        gap_nm=round(rng.uniform(3.0, 9.0), 1),
+                        taken=False,
+                    )
+                )
+
+        real = int(real_by_hour.get(hour, 0))
+        # Demand is highest around the ETA and eases in later hours (traffic metered).
+        util = rng.uniform(util_lo, util_hi) - decay * max(0, hour - eta_hour)
+        background = max(real, int(round(max(0.0, util) * aar_reduced)))
+        if background >= aar_reduced:
+            for sl in hour_slots:  # hour at capacity
+                sl.taken = True
+        else:
+            # Seeded placement of the hour's background arrivals (real + fill).
+            for pick in rng.sample(range(len(hour_slots)), min(background, len(hour_slots))):
+                hour_slots[pick].taken = True
+        slots.extend(hour_slots)
+    slots.sort(key=lambda sl: (active.index(sl.runway), sl.slot_time))
     return slots
 
 
@@ -401,10 +467,25 @@ def _gates(
     expected_eta: int,
     cfg: dict[str, Any],
     rng: random.Random,
+    limits: AirportLimits,
 ) -> tuple[list[Gate], str, list[str]]:
+    """Modelled gate subset (carrier + common-use) of the workbook ``gates`` total.
+
+    At least workbook ``spare_gates_at_any_time`` modelled gates are kept free over
+    the planned turnaround window ``[eta, eta + min_turnaround]`` (+ buffer), in
+    addition to the planned gate.
+    """
+
     ground_cfg = cfg["ground"]
-    n_carrier = int(ground_cfg["gates_per_carrier"])
-    n_common = int(ground_cfg["common_use_gates"])
+    modelled = max(
+        2,
+        min(
+            int(limits.gates),
+            int(ground_cfg["gates_per_carrier"]) + int(ground_cfg["common_use_gates"]),
+        ),
+    )
+    n_carrier = min(int(ground_cfg["gates_per_carrier"]), modelled - 1)
+    n_common = modelled - n_carrier
     terminal = "ABCDE"[hashlib.sha256(rec.destination.encode()).digest()[0] % 5]
 
     sizes: list[SizeClass] = []
@@ -463,10 +544,12 @@ def _gates(
                 real_windows.append((t - 45, t))
 
     rng.shuffle(real_windows)
+    real_marks: set[tuple[str, int, int]] = set()
     for i, window in enumerate(real_windows[:5]):
         gid = gate_ids[i % len(gate_ids)]
         gate = next(g for g in gates if g.gate_id == gid)
         gate.occupied.append(window)
+        real_marks.add((gid, int(window[0]), int(window[1])))
 
     occupancy_frac = float(ground_cfg["gate_occupancy_frac"])
     for gate in gates:
@@ -485,6 +568,32 @@ def _gates(
         if not (protected_lo < e and s < protected_hi)
     ]
 
+    # Workbook airport_capacity: spare_gates_at_any_time free over the turnaround
+    # window.  Clear synthetic blocks first, real same-carrier windows only if needed.
+    buffer_min = int(ground_cfg.get("gate_buffer_min", 10))
+    w_lo = expected_eta - buffer_min
+    w_hi = expected_eta + int(limits.min_turnaround_min) + buffer_min
+
+    def overlapping(gate: Gate) -> list[tuple[int, int]]:
+        return [(a, b) for (a, b) in gate.occupied if w_lo < b and a < w_hi]
+
+    def is_free(gate: Gate) -> bool:
+        return not overlapping(gate)
+
+    # Spare = free gates OTHER than the planned gate (which is held for this flight).
+    needed = int(limits.spare_gates_at_any_time)
+    others = [g for g in gates if g.gate_id != current]
+    for allow_real in (False, True):
+        for gate in others:
+            if sum(1 for g in others if is_free(g)) >= needed:
+                break
+            blocks = overlapping(gate)
+            if not blocks:
+                continue
+            if not allow_real and any((gate.gate_id, a, b) in real_marks for a, b in blocks):
+                continue
+            gate.occupied = [w for w in gate.occupied if w not in blocks]
+
     for gate in gates:
         gate.occupied.sort()
 
@@ -499,20 +608,33 @@ def _gates(
     return gates, current, public_ids
 
 
-def _shifts(cfg: dict[str, Any]) -> list[CrewShift]:
-    ground_cfg = cfg["ground"]
-    extra = int(ground_cfg["hard_limit_extra_min"])
-    rate = float(ground_cfg["overtime_eur_per_min"])
-    return [
-        CrewShift(
-            shift_id=str(t["shift_id"]),
-            start=int(t["start"]),
-            end=int(t["end"]),
-            hard_limit_end=int(t["end"]) + extra,
-            overtime_eur_per_min=rate,
+def _shifts(cfg: dict[str, Any], costs: dict[str, Any]) -> list[CrewShift]:
+    """Ramp-crew shifts: workbook 8 h shift, overtime at base x 1.5 (cost only).
+
+    The workbook sets no hard labour limit, so ``hard_limit_end`` equals the
+    normal shift end (kept for schema compatibility; GND-CREW-01 never vetoes).
+    """
+
+    limits = fuel_crew()
+    length = int(limits.ground_shift_min)
+    multiplier = float(limits.ground_overtime_multiplier)
+    base = float(costs["ground_crew_base_eur_per_min"])
+    shifts: list[CrewShift] = []
+    for t in cfg["ground"]["shift_templates"]:
+        start = int(t["start"])
+        end = start + length
+        shifts.append(
+            CrewShift(
+                shift_id=str(t["shift_id"]),
+                start=start,
+                end=end,
+                hard_limit_end=end,
+                overtime_eur_per_min=round(base * multiplier, 4),
+                base_eur_per_min=base,
+                overtime_multiplier=multiplier,
+            )
         )
-        for t in ground_cfg["shift_templates"]
-    ]
+    return shifts
 
 
 def _defect(
@@ -564,18 +686,27 @@ def build_event(
     costs = load_yaml("costs")
     runway_cfg = load_yaml("runways")
     rng = _rng(rec, seed)
+    dest_limits = airport_limits(rec.destination)  # workbook airport_capacity
+    fc_limits = fuel_crew()  # workbook fuel_and_crew
 
     mode = mode_for(rec)
     disruption_type = disruption_type_for(rec)
     aircraft = _aircraft(rec, rng, cfg)
-    active_runways = _active_runways(rec.destination, rng, runway_cfg)
+    active_runways = _active_runways(
+        rec.destination, _rng(rec, seed, "runways"), runway_cfg, dest_limits
+    )
     decision_time, expected_eta, _delay = _delays(mode, rec, cfg)
 
     # ---------------------------------------------------------------- ATC private
-    aar_normal = int(
-        cfg["atc"]["aar_normal"].get(
-            rec.destination, int(cfg["atc"]["aar_normal_default"])
-        )
+    # Normal arrival rate = modelled arrival share of the workbook runway ops/hour.
+    aar_normal = max(
+        1,
+        int(
+            round(
+                float(cfg["atc"]["arrival_share_of_runway_ops"])
+                * dest_limits.max_runway_ops_per_hour
+            )
+        ),
     )
     weather_fraction = 0.0
     if mode == Mode.AIRBORNE:
@@ -583,7 +714,7 @@ def build_event(
             if rec.weather_delay <= int(upper):
                 weather_fraction = float(fraction)
                 break
-    aar_reduced = max(10, int(round(aar_normal * (1.0 - weather_fraction))))
+    aar_reduced = max(1, int(round(aar_normal * (1.0 - weather_fraction))))
 
     closed: list[str] = []
     if rng.random() < float(cfg["atc"]["closed_taxiway_prob"]):
@@ -600,11 +731,12 @@ def build_event(
         grid_start = departure_grid + block_min - max_recovery
         span_min = max_recovery + int(cfg["atc"]["slot_horizon_min"]) + 15
     slots = _slots(
+        rec,
         active_runways,
         expected_eta,
         aar_reduced,
         cfg,
-        rng,
+        _rng(rec, seed, "traffic"),
         cfg["aircraft_types"],
         grid_start=grid_start,
         span_min=span_min,
@@ -612,6 +744,8 @@ def build_event(
     atc_private = AtcPrivate(
         aar_normal=aar_normal,
         aar_reduced=aar_reduced,
+        max_runway_ops_per_hour=dest_limits.max_runway_ops_per_hour,
+        active_runways=dest_limits.active_runways,
         slots=slots,
         notam_text=_notam_text(rec.destination, rec, closed, rng),
         truth_closed_taxiways=closed,
@@ -634,21 +768,17 @@ def build_event(
     fuel_to_alternate = (
         alternate_distance / float(fuel_cfg["alternate_speed_kt"]) * 60.0 * burn
     )
-    reserve_45 = 45.0 * burn
-    contingency = float(fuel_cfg["contingency_frac"]) * fuel_to_destination
-
+    # Workbook fuel_and_crew: final reserve 30 min holding; contingency 5% of trip
+    # fuel; assumed spare on arrival 45 min holding ON TOP of the final reserve.
+    # Alternate fuel is not part of the arrival requirement (the workbook has none);
+    # fuel_to_alternate is only used to check a divert option.
+    final_reserve = fc_limits.final_reserve_holding_min * hold_burn
+    contingency = fc_limits.contingency_frac * fuel_to_destination
+    spare = fc_limits.spare_fuel_holding_min * hold_burn
+    fuel_on_board = fuel_to_destination + contingency + final_reserve + spare
     if mode == Mode.AIRBORNE:
-        extra_hold = rng.uniform(*fuel_cfg["extra_holding_min_range"])
-        fuel_on_board = (
-            fuel_to_destination
-            + fuel_to_alternate
-            + reserve_45
-            + contingency
-            + extra_hold * hold_burn
-        )
         max_extra_fuel = 0.0
     else:
-        fuel_on_board = fuel_to_destination + fuel_to_alternate + reserve_45 + contingency
         max_extra_fuel = rng.uniform(*fuel_cfg["max_extra_uplift_kg_range"])
 
     chosen_levels = sorted(int(level) for level in fuel_cfg["cruise_levels"])
@@ -659,35 +789,56 @@ def build_event(
         chosen_levels, key=lambda lv: (turbulence_truth.get(f"FL{lv}") == "SEVERE", lv)
     )
 
+    # Flight crew: workbook max duty 13 h from report.  Seeded multi-leg day: the crew
+    # reported 60 min before this leg, or earlier (prior legs) so that `margin` minutes
+    # of duty remain at the scheduled arrival.  Times are on the option timeline:
+    # GROUND = origin clock (departure + block), AIRBORNE = destination clock.
+    pilot_cfg = cfg["pilot"]
+    max_duty = int(fc_limits.flight_crew_max_duty_min)
+    margin = _rng(rec, seed, "crew").randint(
+        *(int(x) for x in pilot_cfg["duty_margin_at_sched_arrival_range"])
+    )
+    if mode == Mode.GROUND:
+        leg_dep = rec.scheduled_departure
+        leg_arr = rec.scheduled_departure + sched_time
+    else:
+        leg_arr = rec.scheduled_arrival
+        leg_dep = rec.scheduled_arrival - sched_time
+    crew_report = min(
+        leg_dep - int(pilot_cfg["report_before_departure_min"]),
+        leg_arr + margin - max_duty,
+    )
+
     pilot_private = PilotPrivate(
         fuel_on_board_kg=round(fuel_on_board, 1),
         fuel_to_destination_kg=round(fuel_to_destination, 1),
         alternate=alternate,
         alternate_distance_nm=round(alternate_distance, 1),
         fuel_to_alternate_kg=round(fuel_to_alternate, 1),
-        reserve_45_kg=round(reserve_45, 1),
+        final_reserve_kg=round(final_reserve, 1),
+        contingency_kg=round(contingency, 1),
         max_extra_fuel_kg=round(max_extra_fuel, 1),
         cruise_levels=chosen_levels,
         turbulence_text=turbulence_text,
         truth_turbulence=turbulence_truth,
         connections=_connections(rec, cfg, rng),
         pax_notes=_pax_notes(rng),
-        crew_duty_remaining_min=int(
-            rng.randint(*cfg["pilot"]["crew_duty_remaining_range"])
-            + (expected_eta - decision_time if mode == Mode.GROUND else 0)
-        ),
+        crew_duty_remaining_min=int(crew_report + max_duty - decision_time),
+        crew_report_time=int(crew_report),
+        crew_max_duty_min=max_duty,
     )
 
     # ---------------------------------------------------------------- Ground private
-    gates, current_gate, public_gate_ids = _gates(rec, aircraft, expected_eta, cfg, rng)
-    min_turn_map = cfg["ground"]["min_turnaround_min"]
-    min_turn = int(min_turn_map[aircraft.size_class.value])
+    gates, current_gate, public_gate_ids = _gates(
+        rec, aircraft, expected_eta, cfg, rng, dest_limits
+    )
+    min_turn = int(dest_limits.min_turnaround_min)  # workbook, destination airport
     defect = _defect(mode, defect_id, cfg, rng)
 
     ground_private = GroundPrivate(
         gates=gates,
         current_gate=current_gate,
-        shifts=_shifts(cfg),
+        shifts=_shifts(cfg, costs),
         min_turnaround_min=min_turn,
         next_leg=_next_leg(rec, expected_eta, cfg, rng),
         defect=defect,
@@ -695,6 +846,9 @@ def build_event(
             rng.random() < float(cfg["ground"]["spare_aircraft_prob"])
         ),
         gate_change_eur=float(costs["gate_change_eur"]),
+        gate_change_notice_min=int(fc_limits.gate_change_notice_min),
+        total_gates=int(dest_limits.gates),
+        spare_gates_at_any_time=int(dest_limits.spare_gates_at_any_time),
     )
 
     # ---------------------------------------------------------------- public
@@ -716,8 +870,10 @@ def build_event(
         "aircraft.cruise_burn_kg_min",
         "destination_runways",
         "atc.slots",
+        "atc.background_traffic",
         "atc.notam_text",
         "pilot.fuel_on_board_kg",
+        "pilot.crew_report_time",
         "pilot.alternate",
         "pilot.turbulence",
         "pilot.connections.pax",

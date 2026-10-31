@@ -72,6 +72,10 @@ class FakeAgent(BaseAgent):
         turn2_votes: dict[str, tuple[str, str | None]] | None = None,
         extra_votes: list[Vote] | None = None,
         facts: list[PerceivedFact] | None = None,
+        turn2_counter: CounterOption | None = None,
+        turn3_votes: dict[str, tuple[str, str | None]] | None = None,
+        turn3_counter: CounterOption | None = None,
+        raise_turn3: bool = False,
     ) -> None:
         super().__init__(role, private or FakePrivate(tag=role.value), dict(cfg or DEFAULT_CFG))
         self.fail_map = {k: list(v) for k, v in (fail_map or {}).items()}
@@ -88,6 +92,11 @@ class FakeAgent(BaseAgent):
         self.extra_votes = extra_votes or []
         self.facts = facts or []
         self.last_fallback_option = None
+        self.turn2_counter = turn2_counter
+        self.turn3_votes = turn3_votes
+        self.turn3_counter = turn3_counter
+        self.raise_turn3 = raise_turn3
+        self.turn3_calls: list[dict[str, Any]] = []
 
     # ---------------------------------------------------------------- code-only API
     def perceive(self, public: PublicEvent) -> list[PerceivedFact]:
@@ -175,6 +184,33 @@ class FakeAgent(BaseAgent):
     ) -> BallotMessage:
         if self.raise_turn2:
             raise RuntimeError("scripted turn2 failure")
+        return self._fake_ballot(public, shortlist, fallback_option, self.turn2_votes, 2, self.turn2_counter)
+
+    def turn3(
+        self,
+        public: PublicEvent,
+        shortlist: list[CandidateOption],
+        summaries: list[PublicSummary],
+        *,
+        fallback_option: CandidateOption | None = None,
+    ) -> BallotMessage:
+        if self.raise_turn3:
+            raise RuntimeError("scripted turn3 failure")
+        self.turn3_calls.append(
+            {"shortlist": [o.option_id for o in shortlist], "summaries": list(summaries), "fallback": fallback_option}
+        )
+        scripted = self.turn3_votes if self.turn3_votes is not None else self.turn2_votes
+        return self._fake_ballot(public, shortlist, fallback_option, scripted, 3, self.turn3_counter)
+
+    def _fake_ballot(
+        self,
+        public: PublicEvent,
+        shortlist: list[CandidateOption],
+        fallback_option: CandidateOption | None,
+        scripted: dict[str, tuple[str, str | None]],
+        turn: int,
+        counter: CounterOption | None,
+    ) -> BallotMessage:
         self.last_fallback_option = fallback_option
         best = max((self.util_map.get(o.option_id, 0.0) for o in shortlist), default=0.0)
         fallback_utility = (
@@ -186,8 +222,8 @@ class FakeAgent(BaseAgent):
         for option in shortlist:
             oid = option.option_id
             failing = [c for c in self.check(public, option) if c.hard and not c.passed]
-            if oid in self.turn2_votes:
-                vote, reason = self.turn2_votes[oid]
+            if oid in scripted:
+                vote, reason = scripted[oid]
                 votes.append(Vote(option_id=oid, vote=vote, reason=reason))  # type: ignore[arg-type]
             elif failing:
                 votes.append(Vote(option_id=oid, vote="DISAPPROVE", reason=failing[0].constraint_id))
@@ -207,11 +243,13 @@ class FakeAgent(BaseAgent):
         )
         return BallotMessage(
             run_id=public.run_id,
+            turn=turn,  # type: ignore[arg-type]
             sender=self.role,
             votes=votes,
             ranking=ranking,
+            counter_option=counter,
             citations=[],
-            rationale=f"{self.role.value} fake ballot",
+            rationale=f"{self.role.value} fake ballot (turn {turn})",
         )
 
 
@@ -324,12 +362,15 @@ def make_disruption_event() -> DisruptionEvent:
             notam_text=[],
         ),
         pilot=PilotPrivate(
-            fuel_on_board_kg=5000,
+            # Workbook fuel_and_crew at 40 kg/min holding: trip 3000 + contingency 150
+            # + final reserve 30 min (1200) + spare 45 min (1800).
+            fuel_on_board_kg=6150,
             fuel_to_destination_kg=3000,
             alternate="OKC",
             alternate_distance_nm=180,
             fuel_to_alternate_kg=1200,
-            reserve_45_kg=1700,
+            final_reserve_kg=1200,
+            contingency_kg=150,
             max_extra_fuel_kg=2000,
             cruise_levels=[320, 340, 360],
             turbulence_text=[],
@@ -344,7 +385,9 @@ def make_disruption_event() -> DisruptionEvent:
                     real=True,
                 )
             ],
-            crew_duty_remaining_min=300,
+            crew_duty_remaining_min=300,  # = report 60 + max duty 780 - decision 540
+            crew_report_time=60,
+            crew_max_duty_min=780,
         ),
         ground=GroundPrivate(
             gates=[
@@ -357,8 +400,10 @@ def make_disruption_event() -> DisruptionEvent:
                     shift_id="S1",
                     start=360,
                     end=720,
-                    hard_limit_end=780,
-                    overtime_eur_per_min=5.0,
+                    hard_limit_end=720,  # workbook: no hard limit, overtime is cost only
+                    overtime_eur_per_min=6.0,
+                    base_eur_per_min=4.0,
+                    overtime_multiplier=1.5,
                 )
             ],
             min_turnaround_min=45,
@@ -371,6 +416,9 @@ def make_disruption_event() -> DisruptionEvent:
             defect=DefectReport(defect_id="D1", text="hyd low press"),
             spare_aircraft_available=False,
             gate_change_eur=400.0,
+            gate_change_notice_min=20,
+            total_gates=150,
+            spare_gates_at_any_time=3,
         ),
     )
 

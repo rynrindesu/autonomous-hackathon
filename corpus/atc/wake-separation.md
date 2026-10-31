@@ -68,3 +68,14 @@ deliberately uses the unmodified ICAO J/H/M/L table, not the UK subcategories.
 The Super/J minima originate in ICAO guidance for the A380-800. Always check
 the current AIP/NOTAM for local procedures, and never use this summary as an
 operational separation authority.
+
+## Limits used in this project
+
+The ATC checker (ATC-WAKE-01) does not use the ICAO table above directly. It
+uses the organisers' simplified table (challenge-2 workbook: wake_separation,
+"simplified from FAA JO 7110.65"), with the workbook classes mapped to ICAO
+categories Super = J, Heavy = H, Large = M and Small = L: Super leading Heavy,
+Large or Small 6, 7 or 8 NM; Heavy leading Heavy, Large or Small 4, 5 or 6 NM;
+**Large leading Small 4 NM**; and **any other pair 3 NM** (so a Super behind a
+Super, or a Medium behind a Medium, needs 3 NM). Cite "challenge-2 workbook:
+wake_separation" for these values; the ICAO table above is background.

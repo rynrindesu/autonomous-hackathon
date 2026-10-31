@@ -81,18 +81,21 @@ def _atc_private(text: str) -> AtcPrivate:
 
 def _pilot_private(text: str) -> PilotPrivate:
     return PilotPrivate(
-        fuel_on_board_kg=5000,
+        # Workbook fuel_and_crew at 40 kg/min holding: trip + 5% + 30 min reserve + 45 min spare.
+        fuel_on_board_kg=6150,
         fuel_to_destination_kg=3000,
         alternate="COS",
         alternate_distance_nm=80,
         fuel_to_alternate_kg=800,
-        reserve_45_kg=1700,
+        final_reserve_kg=1200,
+        contingency_kg=150,
         max_extra_fuel_kg=1000,
         cruise_levels=[320, 340, 360],
         turbulence_text=[text],
         connections=[],
         pax_notes=[],
         crew_duty_remaining_min=300,
+        crew_report_time=60,
     )
 
 

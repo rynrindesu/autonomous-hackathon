@@ -3,20 +3,21 @@ doc: "Synthetic ramp turnaround procedure and minimum turnaround times"
 url: null
 synthetic: true
 licence: "Team-written synthetic training material (not operational data)"
-edition: "Triad synthetic corpus v1; values mirror config/synthetic.yaml"
+edition: "Triad synthetic corpus v2; minimum turnaround from challenge-2 workbook: airport_capacity"
 paraphrase: false
 ---
 
 # Synthetic ramp turnaround procedure
 
-## Minimum turnaround by size class
+## Minimum turnaround by airport
 
-The synthetic airline uses these minimum turnaround times from arrival on stand
-to the next departure:
+The minimum turnaround from arrival on stand to the next departure is set per
+destination airport by the organisers' constraints workbook (challenge-2
+workbook: airport_capacity, column min_turnaround_min). It is the same for every
+aircraft size at that airport:
 
-- **REGIONAL** aircraft: **30 minutes**.
-- **NARROW** body aircraft: **40 minutes**.
-- **WIDE** body aircraft: **75 minutes**.
+- **Large hub** airports (ORD, ATL, DFW, DEN, LAX): **45 minutes**.
+- **Medium hub**, **Small hub** and **Non-hub** airports: **35 minutes**.
 
 The minimum is measured from the time the aircraft is chocked at the gate to
 the time it is ready for pushback. The next leg may depart only if the gap
@@ -38,8 +39,8 @@ the departure until repair.
 
 ## Using the procedure
 
-The Ground agent checks the arrival-to-departure gap against the minimum for the
-aircraft's size class. If the gap is too short, the option must delay the next
+The Ground agent checks the arrival-to-departure gap against the workbook
+minimum for the destination airport (GND-TURN-01). If the gap is too short, the option must delay the next
 leg, swap to a spare aircraft if one is available, or be rejected. The agent
 should cite this procedure for the minimum, and the synthetic MEL excerpt for
 the defect action. The real-world turnaround also depends on crew availability,

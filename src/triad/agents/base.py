@@ -1,7 +1,8 @@
 """Agent interface (frozen contract).
 
 Each subagent = perceive (stub now, LLM+RAG later) -> check (code) -> decide (stub now, LLM later).
-The orchestrator only calls: turn1, turn2, check, cost_eur, private_fingerprint.
+The orchestrator only calls: turn1, turn2, turn3, check, cost_eur, private_fingerprint.
+Protocol: T1 PROPOSE -> T2 BALLOT (+ optional counter) -> T3 FINAL BALLOT -> deterministic fallback.
 """
 
 from __future__ import annotations
@@ -98,3 +99,19 @@ class BaseAgent(ABC):
         *,
         fallback_option: CandidateOption | None = None,
     ) -> BallotMessage: ...
+
+    def turn3(
+        self,
+        public: PublicEvent,
+        shortlist: list[CandidateOption],
+        summaries: list[PublicSummary],
+        *,
+        fallback_option: CandidateOption | None = None,
+    ) -> BallotMessage:
+        """Final ballot. Default: same decision logic as turn2, no counter-option allowed.
+
+        ``summaries`` describe the other agents' Turn 2 ballots (votes + reasons).
+        Override in agents that reason differently in the final round.
+        """
+        msg = self.turn2(public, shortlist, summaries, fallback_option=fallback_option)
+        return msg.model_copy(update={"turn": 3, "counter_option": None})

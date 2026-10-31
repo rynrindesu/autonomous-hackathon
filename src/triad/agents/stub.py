@@ -248,16 +248,14 @@ class StubAgent(BaseAgent):
             checks=[c for checks in checks_by_id.values() for c in checks],
         )
 
-    # ------------------------------------------------------------------ turn 2
-    def turn2(
+    # ------------------------------------------------------------------ turn 2 / turn 3
+    def _ballot(
         self,
         public: PublicEvent,
         shortlist: list[CandidateOption],
-        summaries: list[PublicSummary],
-        *,
-        fallback_option: CandidateOption | None = None,
-    ) -> BallotMessage:
-        facts = self.perceive(public)
+        fallback_option: CandidateOption | None,
+    ) -> tuple[list[Vote], list[str], dict[str, float]]:
+        """Code-only votes: approve within tolerance of the best, or at least as good as the fallback."""
         utility = {option.option_id: self.utility(public, option) for option in shortlist}
         best = max(utility.values(), default=0.0)
         fallback_utility = (
@@ -277,31 +275,183 @@ class StubAgent(BaseAgent):
                 votes.append(Vote(option_id=oid, vote="DISAPPROVE", reason=self._worst_category(public, option)))
         approved = [v.option_id for v in votes if v.vote == "APPROVE"]
         ranking = sorted(approved, key=lambda oid: (-utility[oid], oid))
+        return votes, ranking, utility
 
-        if self.red_team and self.role is AgentRole.PILOT:
-            compromised = red_team_votes([o.option_id for o in shortlist], self._unsafe_ids)
-            if compromised is not None:
-                votes, ranking, target = compromised
-                return BallotMessage(
-                    run_id=public.run_id,
-                    sender=self.role,
-                    votes=votes,
-                    ranking=ranking,
-                    citations=self._citations(facts),
-                    rationale=f"RED-TEAM: approve {target} regardless of checks.",
-                )
+    def _red_team_ballot(
+        self, public: PublicEvent, shortlist: list[CandidateOption], facts: list[PerceivedFact], turn: int
+    ) -> BallotMessage | None:
+        if not (self.red_team and self.role is AgentRole.PILOT):
+            return None
+        compromised = red_team_votes([o.option_id for o in shortlist], self._unsafe_ids)
+        if compromised is None:
+            return None
+        votes, ranking, target = compromised
+        return BallotMessage(
+            run_id=public.run_id,
+            turn=turn,  # type: ignore[arg-type]
+            sender=self.role,
+            votes=votes,
+            ranking=ranking,
+            citations=self._citations(facts),
+            rationale=f"RED-TEAM: approve {target} regardless of checks.",
+        )
 
+    def turn2(
+        self,
+        public: PublicEvent,
+        shortlist: list[CandidateOption],
+        summaries: list[PublicSummary],
+        *,
+        fallback_option: CandidateOption | None = None,
+    ) -> BallotMessage:
+        facts = self.perceive(public)
+        votes, ranking, utility = self._ballot(public, shortlist, fallback_option)
+
+        compromised = self._red_team_ballot(public, shortlist, facts, 2)
+        if compromised is not None:
+            return compromised
+
+        counter = self._turn2_counter(public, shortlist, votes, utility)
+        rationale = (
+            f"{self.role.value} stub approves {ranking[0] if ranking else 'nothing'}"
+            f" ({len(ranking)}/{len(shortlist)} approved)."
+        )
+        if counter is not None:
+            rationale += (
+                f" Counter on {counter.base_option_id} (disapproved): "
+                + ", ".join(f"{k}={v}" for k, v in sorted(counter.changes.items()))
+                + "."
+            )
         return BallotMessage(
             run_id=public.run_id,
             sender=self.role,
             votes=votes,
             ranking=ranking,
+            counter_option=counter,
             citations=self._citations(facts),
-            rationale=(
-                f"{self.role.value} stub approves {ranking[0] if ranking else 'nothing'}"
-                f" ({len(ranking)}/{len(shortlist)} approved)."
-            ),
+            rationale=rationale,
         )
+
+    def turn3(
+        self,
+        public: PublicEvent,
+        shortlist: list[CandidateOption],
+        summaries: list[PublicSummary],
+        *,
+        fallback_option: CandidateOption | None = None,
+    ) -> BallotMessage:
+        """Final ballot: same code rule as Turn 2 (incl. 'at least as good as the fallback'), no counter."""
+        facts = self.perceive(public)
+        votes, ranking, _utility = self._ballot(public, shortlist, fallback_option)
+
+        compromised = self._red_team_ballot(public, shortlist, facts, 3)
+        if compromised is not None:
+            return compromised
+
+        backed = sorted(
+            {v.option_id for s in summaries for v in s.votes if v.vote == "APPROVE"} & set(ranking)
+        )
+        rationale = (
+            f"{self.role.value} stub final ballot approves {ranking[0] if ranking else 'nothing'}"
+            f" ({len(ranking)}/{len(shortlist)} approved)."
+        )
+        if backed:
+            rationale += f" Also approved by another agent in Turn 2: {', '.join(backed)}."
+        if fallback_option is not None:
+            rationale += f" Fallback would commit {fallback_option.option_id}."
+        return BallotMessage(
+            run_id=public.run_id,
+            turn=3,
+            sender=self.role,
+            votes=votes,
+            ranking=ranking,
+            citations=self._citations(facts),
+            rationale=rationale,
+        )
+
+    # ------------------------------------------------------------------ turn 2 counter
+    def _single_field_mutations(self, public: PublicEvent, base: CandidateOption) -> list[dict[str, Any]]:
+        """One change per role in a field it owns, deterministic order."""
+        changes: list[dict[str, Any]] = []
+        if self.role is AgentRole.GROUND:
+            # a different gate at the same time (own checker decides size/occupancy)
+            changes.extend({"gate": gate} for gate in public.public_gate_ids if gate != base.gate)
+        elif self.role is AgentRole.PILOT:
+            if base.mode == Mode.AIRBORNE and base.holding_min > 0:
+                # absorb the hold en route instead (flight-plan change)
+                changes.append(
+                    {"holding_min": 0, "enroute_absorb_min": base.enroute_absorb_min + base.holding_min}
+                )
+            levels = list(getattr(self._private, "cruise_levels", None) or [])
+            changes.extend({"cruise_level": level} for level in levels if level != base.cruise_level)
+        elif self.role is AgentRole.ATC:
+            slots = [
+                s
+                for s in (getattr(self._private, "slots", None) or [])
+                if not getattr(s, "taken", False) and s.slot_time != base.arrival_slot
+            ]
+            if slots:
+                nearest = sorted(slots, key=lambda s: (abs(s.slot_time - base.arrival_slot), s.slot_time, s.runway))
+                targets = [(s.slot_time, s.runway) for s in nearest[:4]]
+            else:
+                targets = [(base.arrival_slot + d, base.runway) for d in (5, -5, 10, -10)]
+            for slot_time, runway in targets:
+                delta = slot_time - base.arrival_slot
+                change: dict[str, Any] = {"arrival_slot": slot_time}
+                if runway != base.runway:
+                    change["runway"] = runway
+                if base.mode == Mode.AIRBORNE:
+                    new_hold = base.holding_min + delta
+                    if new_hold < 0:
+                        continue
+                    change["holding_min"] = new_hold
+                elif base.departure_slot is not None:
+                    change["departure_slot"] = base.departure_slot + delta
+                changes.append(change)
+        return changes
+
+    def _turn2_counter(
+        self,
+        public: PublicEvent,
+        shortlist: list[CandidateOption],
+        votes: list[Vote],
+        utility: dict[str, float],
+    ) -> CounterOption | None:
+        """Revise the highest-Borda shortlisted option (shortlist[0]) if we disapproved it on a soft reason.
+
+        Only if the revision passes our own checker and improves our own utility.
+        """
+        if not shortlist:
+            return None
+        target = shortlist[0]
+        vote = next((v for v in votes if v.option_id == target.option_id), None)
+        if vote is None or vote.vote != "DISAPPROVE" or vote.reason not in _OBJECTION_CATEGORIES:
+            return None
+        base_utility = utility.get(target.option_id, self.utility(public, target))
+        best: tuple[float, dict[str, Any]] | None = None
+        seen: set[str] = set()
+        for change in self._single_field_mutations(public, target):
+            key = repr(sorted(change.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            candidate = target.model_copy(
+                update={
+                    **change,
+                    "option_id": f"CTR-{self.role.value}-2",
+                    "origin": "COUNTER",
+                    "proposed_by": self.role,
+                    "base_option_id": target.option_id,
+                }
+            )
+            if self._failing(self._checks(public, candidate)):
+                continue
+            value = self.utility(public, candidate)
+            if value > base_utility + 1e-9 and (best is None or value > best[0] + 1e-9):
+                best = (value, change)
+        if best is None:
+            return None
+        return CounterOption(base_option_id=target.option_id, changes=best[1])
 
     def _worst_category(self, public: PublicEvent, option: CandidateOption) -> str:
         objectives = self.objectives(public, option)

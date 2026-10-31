@@ -1,5 +1,13 @@
-"""Pilot fuel checks.  All burn rates come from the public aircraft type; fuel
-quantities and the alternate come from Pilot private data."""
+"""Pilot fuel checks (workbook fuel_and_crew).
+
+* Final reserve = 30 min of holding fuel; PLT-FUEL-01 never lets planned landing
+  fuel drop below it (divert: fuel to alternate + final reserve).
+* Fuel on board carries contingency (5% of trip) + spare (45 min holding) ON TOP
+  of the final reserve, so ~45 min of holding/absorption fits before PLT-FUEL-02
+  vetoes.
+* Holding burn is the workbook narrowbody/widebody figure (public aircraft info);
+  fuel quantities and the alternate come from Pilot private data.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +15,7 @@ from typing import Callable
 
 from triad.config import load_yaml
 from triad.constraints.shared import is_divert, make_check
+from triad.data.limits import fuel_crew
 from triad.schemas import CandidateOption, ConstraintCheck, PerceivedFact, PilotPrivate, PublicEvent
 
 
@@ -55,9 +64,9 @@ def landing_fuel_kg(public: PublicEvent, private: PilotPrivate, option: Candidat
 
 
 def required_landing_fuel_kg(private: PilotPrivate) -> float:
-    if False:  # pragma: no cover - kept explicit for readability
-        return 0.0
-    return private.fuel_to_alternate_kg + private.reserve_45_kg
+    """Workbook: never plan to land below the final reserve (30 min holding)."""
+
+    return private.final_reserve_kg
 
 
 def max_holding_min(public: PublicEvent, private: PilotPrivate, option: CandidateOption) -> float:
@@ -72,8 +81,7 @@ def max_holding_min(public: PublicEvent, private: PilotPrivate, option: Candidat
     spare = (
         private.fuel_on_board_kg
         - private.fuel_to_destination_kg
-        - private.fuel_to_alternate_kg
-        - private.reserve_45_kg
+        - required_landing_fuel_kg(private)
         - absorb_burn
     )
     return max(0.0, spare / hold) if hold > 0 else 0.0
@@ -86,13 +94,12 @@ def check_fuel(
     option: CandidateOption,
     next_id: Callable[[], str],
 ) -> list[ConstraintCheck]:
-    cfg = load_yaml("constraints")
-    reserve_min = int(cfg.get("fuel_reserve_min", 45))
+    reserve_min = fuel_crew().final_reserve_holding_min
     checks: list[ConstraintCheck] = []
 
     if is_divert(option):
         available = private.fuel_on_board_kg
-        needed = private.fuel_to_alternate_kg + private.reserve_45_kg
+        needed = private.fuel_to_alternate_kg + private.final_reserve_kg
         checks.append(
             make_check(
                 constraint_id="PLT-FUEL-01",
@@ -105,7 +112,8 @@ def check_fuel(
                 unit="kg",
                 detail=(
                     f"divert to {option.divert_to}: fuel on board {available:.0f} kg vs "
-                    f"alternate {private.fuel_to_alternate_kg:.0f} kg + {reserve_min} min reserve"
+                    f"alternate {private.fuel_to_alternate_kg:.0f} kg + final reserve "
+                    f"{private.final_reserve_kg:.0f} kg ({reserve_min:g} min holding)"
                 ),
             )
         )
@@ -137,8 +145,9 @@ def check_fuel(
             limit=round(required, 1),
             unit="kg",
             detail=(
-                f"landing fuel {landing:.0f} kg vs alternate {private.fuel_to_alternate_kg:.0f} kg "
-                f"+ {reserve_min} min reserve {private.reserve_45_kg:.0f} kg"
+                f"planned landing fuel {landing:.0f} kg vs final reserve "
+                f"{required:.0f} kg ({reserve_min:g} min holding at "
+                f"{public.aircraft.holding_burn_kg_min:g} kg/min)"
             ),
         )
     )
@@ -154,7 +163,10 @@ def check_fuel(
             value=float(option.holding_min),
             limit=round(limit_hold, 1),
             unit="min",
-            detail=f"planned holding {option.holding_min} min; fuel supports {limit_hold:.1f} min",
+            detail=(
+                f"planned holding {option.holding_min} min; fuel above final reserve "
+                f"supports {limit_hold:.1f} min"
+            ),
         )
     )
     return checks

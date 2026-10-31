@@ -1,4 +1,4 @@
-"""Pilot turbulence check (PLT-WX-01)."""
+"""Pilot turbulence check (PLT-WX-01) and flight-duty check (PLT-FDP-01)."""
 
 from __future__ import annotations
 
@@ -77,21 +77,40 @@ def check_duty(
     option: CandidateOption,
     next_id: Callable[[], str],
 ) -> list[ConstraintCheck]:
-    """PLT-FDP-01: flight duty period from the decision point to touchdown."""
+    """PLT-FDP-01: touchdown within the max duty period from crew report time.
 
-    remaining = int(private.crew_duty_remaining_min)
-    # Duty runs from the decision point to touchdown (block + any delay).
-    elapsed = max(0, int(option.arrival_slot) - int(public.decision_time))
+    Workbook fuel_and_crew: flight crew max duty 13 h from report time
+    (simplified FAA Part 117).  For a divert the touchdown is the option's
+    arrival estimate as well.
+    """
+
+    max_duty = int(private.crew_max_duty_min)
+    arrival = int(option.arrival_slot)
+    if private.crew_report_time is not None:
+        report = int(private.crew_report_time)
+        duty = arrival - report
+        detail = (
+            f"report {report} -> touchdown {arrival}: duty {duty} min vs max "
+            f"{max_duty} min ({max_duty / 60:g} h from report)"
+        )
+    else:
+        # Legacy data without a report time: derive it from the remaining duty.
+        report = int(public.decision_time) + int(private.crew_duty_remaining_min) - max_duty
+        duty = arrival - report
+        detail = (
+            f"decision-to-touchdown {max(0, arrival - int(public.decision_time))} min vs crew "
+            f"duty remaining {private.crew_duty_remaining_min} min"
+        )
     return [
         make_check(
             constraint_id="PLT-FDP-01",
             owner="PILOT",
             option=option,
             next_id=next_id,
-            passed=elapsed <= remaining,
-            value=elapsed,
-            limit=remaining,
+            passed=duty <= max_duty,
+            value=duty,
+            limit=max_duty,
             unit="min",
-            detail=f"decision-to-touchdown {elapsed} min vs crew duty remaining {remaining} min",
+            detail=detail,
         )
     ]

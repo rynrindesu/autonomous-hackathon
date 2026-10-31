@@ -27,14 +27,14 @@ queries:
     expect: ground-ata-chapters-01
   - query: "ATA 32 landing gear chapter"
     expect: ground-ata-chapters-01
-  - query: "minimum turnaround narrowbody 40 minutes"
+  - query: "minimum turnaround large hub 45 minutes medium hub 35 minutes"
     expect: ground-ramp-turnaround-01
-  - query: "widebody turnaround 75 minutes"
-    expect: ground-ramp-turnaround-01
-  - query: "ramp crew hard limit shift end plus 120 minutes"
+  - query: "ramp crew 8 hour shift overtime 1.5x after shift end"
     expect: ground-ramp-crew-shift-01
   - query: "overtime EUR 6 per minute for the turnaround team"
     expect: ground-ramp-crew-shift-01
+  - query: "gate change notice at least 20 minutes before arrival"
+    expect: ground-ramp-crew-shift-02
   - query: "APU category C MEL item 49"
     expect: "B737 MMEL"
   - query: "IDG generator disconnect MEL relief"

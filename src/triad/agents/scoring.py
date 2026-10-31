@@ -70,8 +70,7 @@ def _fuel_objective(
         private.fuel_on_board_kg
         + (private.max_extra_fuel_kg if public.mode == Mode.GROUND else 0.0)
         - private.fuel_to_destination_kg
-        - private.fuel_to_alternate_kg
-        - private.reserve_45_kg
+        - fuel.required_landing_fuel_kg(private)
     )
     extra = fuel.extra_burn_kg(public, private, option)
     return _clip(extra / max(1.0, capacity))
@@ -185,9 +184,13 @@ def _ground_cost(
     public: PublicEvent, private: GroundPrivate, option: CandidateOption, costs: dict[str, Any]
 ) -> dict[str, float]:
     out: dict[str, float] = {}
+    # Workbook fuel_and_crew: 8 h shift, overtime costs 1.5x base after that (cost only).
     overtime = crew.overtime_min(private, option.arrival_slot)
     shift, _ = crew.covering_shift(private, option.arrival_slot)
-    rate = shift.overtime_eur_per_min if shift is not None else 6.0
+    if shift is not None:
+        rate = crew.overtime_rate_eur_per_min(shift)
+    else:
+        rate = float(costs.get("ground_crew_base_eur_per_min", 4.0)) * 1.5
     out["overtime"] = overtime * float(rate)
     if option.gate != private.current_gate:
         out["gate_change"] = float(private.gate_change_eur)

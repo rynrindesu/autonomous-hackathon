@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from triad.data.enrich import build_event
+from triad.data.limits import airport_limits, fuel_crew
 from triad.data.loader import get_record, hhmm_to_minutes
 from triad.data.scenario import disruption_type_for, is_candidate, mode_for
 from triad.schemas import DisruptionType, Mode
@@ -68,3 +69,20 @@ def test_build_event_forced_defect_only_ground() -> None:
     assert ground.ground.defect is not None
     assert ground.ground.defect.defect_id == "DEF-HYD-02"
     assert ground.ground.defect.truth_deferrable is False
+
+
+def test_build_event_uses_workbook_limits() -> None:
+    rec = get_record(0)  # DFW -> HNL, B772 long haul, GROUND mode
+    event = build_event(rec, seed=0)
+    dest = airport_limits(rec.destination)
+    fc = fuel_crew()
+    assert event.atc.max_runway_ops_per_hour == dest.max_runway_ops_per_hour
+    assert event.atc.active_runways == dest.active_runways
+    assert event.ground.min_turnaround_min == dest.min_turnaround_min
+    assert event.ground.total_gates == dest.gates
+    assert event.ground.spare_gates_at_any_time == dest.spare_gates_at_any_time
+    assert event.ground.gate_change_notice_min == fc.gate_change_notice_min
+    assert event.pilot.crew_max_duty_min == fc.flight_crew_max_duty_min
+    hold = event.public.aircraft.holding_burn_kg_min
+    assert event.pilot.final_reserve_kg == round(fc.final_reserve_holding_min * hold, 1)
+    assert "pilot.crew_report_time" in event.public.synthetic_fields

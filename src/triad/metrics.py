@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from triad.config import load_yaml
 from triad.schemas import AgentRole, CandidateOption, DisruptionEvent, LogEntry, Resolution
 
-Outcome = Literal["TURN1", "TURN2", "FALLBACK", "ESCALATED"]
+Outcome = Literal["TURN1", "TURN2", "TURN3", "FALLBACK", "ESCALATED"]
 ROLES = (AgentRole.ATC, AgentRole.PILOT, AgentRole.GROUND)
 DIVERT_ID = "OPT-DIV"
 
@@ -63,6 +63,7 @@ class BatchReport(BaseModel):
     label: str = ""
     n_runs: int
     outcomes: dict[str, int]
+    turns_histogram: dict[str, int] = {}  # turn at which the run ended (1-3), consensus or fallback
     unsafe_commits: int
     feasible_ge2_rate: float | None  # over runs that report n_feasible
     veto_yield: int
@@ -167,7 +168,9 @@ def outcome_of(resolution: Resolution) -> Outcome:
         return "ESCALATED"
     if resolution.status == "FALLBACK":
         return "FALLBACK"
-    return "TURN1" if resolution.turn <= 1 else "TURN2"
+    if resolution.turn <= 1:
+        return "TURN1"
+    return "TURN2" if resolution.turn == 2 else "TURN3"
 
 
 def is_unsafe_commit(resolution: Resolution) -> bool:
@@ -266,8 +269,10 @@ def _mean(values: Iterable[float | int | None]) -> float | None:
 
 
 def aggregate(runs: list[RunMetrics], label: str = "") -> BatchReport:
-    outcomes = Counter({k: 0 for k in ("TURN1", "TURN2", "FALLBACK", "ESCALATED")})
+    outcomes = Counter({k: 0 for k in ("TURN1", "TURN2", "TURN3", "FALLBACK", "ESCALATED")})
     outcomes.update(r.outcome for r in runs)
+    turns = Counter({str(t): 0 for t in (1, 2, 3)})
+    turns.update(str(r.turn) for r in runs if 1 <= r.turn <= 3)
     feasible = [r.n_feasible for r in runs if r.n_feasible is not None]
     committed = [r for r in runs if r.option_id is not None]
     component_keys = sorted({k for r in committed for k in r.cost_components_eur})
@@ -276,6 +281,7 @@ def aggregate(runs: list[RunMetrics], label: str = "") -> BatchReport:
         label=label or (runs[0].label if runs else ""),
         n_runs=len(runs),
         outcomes=dict(outcomes),
+        turns_histogram=dict(turns),
         unsafe_commits=sum(1 for r in runs if r.unsafe_commit),
         feasible_ge2_rate=(round(sum(1 for n in feasible if n >= 2) / len(feasible), 3) if feasible else None),
         veto_yield=sum(r.veto_yield for r in runs),

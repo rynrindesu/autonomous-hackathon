@@ -8,10 +8,23 @@ from triad.agents.scoring import cost_eur, objectives
 from triad.constraints.registry import check_owned
 from triad.constraints.shared import shared_checks
 from triad.data.enrich import build_event
+from triad.data.limits import airport_limits
 from triad.data.loader import get_record
 from triad.options.generator import generate_options
 from triad.picker import _candidate_rows
 from triad.schemas import AgentRole
+
+# Rules whose limits come from the organisers' workbook must cite its sheet.
+WORKBOOK_RULES = {
+    "ATC-WAKE-01": "challenge-2 workbook: wake_separation",
+    "ATC-RWY-01": "challenge-2 workbook: airport_capacity",
+    "GND-TURN-01": "challenge-2 workbook: airport_capacity",
+    "PLT-FUEL-01": "challenge-2 workbook: fuel_and_crew",
+    "PLT-FUEL-02": "challenge-2 workbook: fuel_and_crew",
+    "PLT-FDP-01": "challenge-2 workbook: fuel_and_crew",
+    "GND-GATE-04": "challenge-2 workbook: fuel_and_crew",
+    "GND-CREW-01": "challenge-2 workbook: fuel_and_crew",
+}
 
 
 def test_twenty_candidate_rows_run_cleanly() -> None:
@@ -21,6 +34,11 @@ def test_twenty_candidate_rows_run_cleanly() -> None:
     for row in rows:
         rec = get_record(row)
         event = build_event(rec, seed=0)
+        dest = airport_limits(rec.destination)
+        assert event.ground.min_turnaround_min == dest.min_turnaround_min
+        assert event.ground.total_gates == dest.gates
+        assert len(event.public.destination_runways) <= dest.active_runways
+        assert event.atc.aar_reduced <= event.atc.aar_normal
         options = generate_options(event.public)
         assert 7 <= len(options) <= 13
 
@@ -42,6 +60,10 @@ def test_twenty_candidate_rows_run_cleanly() -> None:
                     assert check.option_id == option.option_id
                     assert check.source
                     assert check.value is not None or check.limit is not None
+                    if check.constraint_id in WORKBOOK_RULES:
+                        assert check.source == WORKBOOK_RULES[check.constraint_id]
+                    if check.constraint_id == "GND-CREW-01":
+                        assert check.hard is False and check.passed  # overtime = cost only
                 objectives(role, event.public, private, facts, option)
                 cost_eur(role, event.public, private, facts, option)
 

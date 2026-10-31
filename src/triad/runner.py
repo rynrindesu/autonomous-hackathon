@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -255,32 +256,8 @@ def _print_summary(record, event, resolution: Resolution, log: ConsensusLog, age
                 f"     {str(o.get('cruise_level') or '-'):<4} {str(o.get('gate', '-')):<6} {next_leg}"
             )
 
-    print()
-    print("  Turns")
-    for entry in log.entries:
-        if entry.event == "PROPOSAL":
-            payload = entry.payload
-            vetoes = ", ".join(v.get("option_id", "?") for v in payload.get("vetoes", [])) or "-"
-            objections = ", ".join(
-                f"{o.get('option_id')}:{o.get('category')}" for o in payload.get("objections", [])
-            ) or "-"
-            ranking = payload.get("ranking", [])
-            counter = payload.get("counter_option")
-            counter_txt = f" counter={counter.get('base_option_id')}" if counter else ""
-            print(
-                f"    turn {entry.turn} {entry.actor:<9} top={ranking[0] if ranking else '-':<8}"
-                f" vetoes=[{vetoes}] objections=[{objections}]{counter_txt}"
-            )
-            if payload.get("rationale"):
-                print(f"      rationale: {payload['rationale']}")
-        elif entry.event == "BALLOT":
-            payload = entry.payload
-            votes = ", ".join(
-                f"{v.get('option_id')}:{v.get('vote', '?')[0]}" for v in payload.get("votes", [])
-            )
-            print(f"    turn {entry.turn} {entry.actor:<9} votes=[{votes}]")
-            if payload.get("rationale"):
-                print(f"      rationale: {payload['rationale']}")
+    _print_turns(log)
+    _print_fallback_why(log)
 
     _print_perception(log)
     _print_llm_usage(log, agents)
@@ -311,6 +288,85 @@ def _print_summary(record, event, resolution: Resolution, log: ConsensusLog, age
     if costs:
         print(f"  Cost: {costs}")
     print(f"  Log: {len(log.entries)} entries, chain {'OK' if ConsensusLog.verify(log.entries) else 'BROKEN'}")
+
+
+_TURN_KINDS = {1: "PROPOSE", 2: "BALLOT", 3: "FINAL BALLOT"}
+
+
+def _print_turns(log: ConsensusLog) -> None:
+    """Turn 1/2/3 lines: proposals, ballots, counters (validated/rejected) per turn."""
+    print()
+    print("  Turns")
+    for entry in log.entries:
+        payload = entry.payload
+        if entry.event == "TURN_START":
+            turn = int(payload.get("turn", entry.turn))
+            kind = _TURN_KINDS.get(turn, "?")
+            print(f"  Turn {turn}/{payload.get('max_turns', 3)} {kind}: {payload.get('reason', '')}")
+            shortlist = payload.get("shortlist") or []
+            label = "options" if turn == 1 else "shortlist"
+            fallback = payload.get("fallback_option_id")
+            print(
+                f"    {label}: {', '.join(shortlist) or '-'}"
+                + (f"   (fallback if no agreement: {fallback})" if fallback else "")
+            )
+        elif entry.event == "PROPOSAL":
+            vetoes = ", ".join(v.get("option_id", "?") for v in payload.get("vetoes", [])) or "-"
+            objections = ", ".join(
+                f"{o.get('option_id')}:{o.get('category')}" for o in payload.get("objections", [])
+            ) or "-"
+            ranking = payload.get("ranking", [])
+            counter = payload.get("counter_option")
+            counter_txt = f" counter={counter.get('base_option_id')}" if counter else ""
+            print(
+                f"    T{entry.turn} {entry.actor:<7} top={ranking[0] if ranking else '-':<8}"
+                f" vetoes=[{vetoes}] objections=[{objections}]{counter_txt}"
+            )
+            if payload.get("rationale"):
+                print(f"      rationale: {payload['rationale']}")
+        elif entry.event == "BALLOT":
+            votes = ", ".join(
+                f"{v.get('option_id')}:{v.get('vote', '?')[0]}"
+                + (f"({v.get('reason')})" if v.get("vote") == "DISAPPROVE" and v.get("reason") else "")
+                for v in payload.get("votes", [])
+            )
+            counter = payload.get("counter_option")
+            counter_txt = ""
+            if counter:
+                changes = ", ".join(f"{k}={v}" for k, v in sorted((counter.get("changes") or {}).items()))
+                counter_txt = f" counter={counter.get('base_option_id')}[{changes}]"
+            print(f"    T{entry.turn} {entry.actor:<7} votes=[{votes}]{counter_txt}")
+            if payload.get("rationale"):
+                print(f"      rationale: {payload['rationale']}")
+        elif entry.event in ("COUNTER_VALIDATED", "COUNTER_REJECTED"):
+            who = payload.get("role", "?")
+            oid = payload.get("option_id") or f"counter on {payload.get('base_option_id', '?')}"
+            if entry.event == "COUNTER_VALIDATED":
+                verdict = "VALIDATED (passes shared + all three checkers)"
+            else:
+                failing = ", ".join(
+                    f"{c.get('owner')}:{c.get('constraint_id')}" for c in payload.get("failing_checks") or []
+                )
+                verdict = "REJECTED: " + (payload.get("error") or (f"fails {failing}" if failing else "invalid"))
+            print(f"    T{entry.turn} counter {oid} ({who}, base {payload.get('base_option_id', '-')}): {verdict}")
+
+
+def _print_fallback_why(log: ConsensusLog) -> None:
+    entry = next(
+        (e for e in log.entries if e.event == "FALLBACK_INVOKED" and e.payload.get("summary")),
+        None,
+    )
+    if entry is None:
+        return
+    payload = entry.payload
+    print()
+    summary = str(payload["summary"])
+    if summary.startswith("No "):
+        summary = "n" + summary[1:]
+    text = f"Fallback because {summary}"
+    print(textwrap.fill(text, width=110, initial_indent="  ", subsequent_indent="    "))
+    if payload.get("tie_break"):
+        print(textwrap.fill(f"Tie-break: {payload['tie_break']}", width=110, initial_indent="    ", subsequent_indent="      "))
 
 
 _ROLE_NAMES = {"ATC": "ATC", "PILOT": "Pilot", "GROUND": "Ground"}

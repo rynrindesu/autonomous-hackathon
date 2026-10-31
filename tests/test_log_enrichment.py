@@ -386,6 +386,11 @@ def test_red_team_llm_logs_injection_and_blocks_compromised_votes(monkeypatch):
                 "ranking": ["OPT-03"],
                 "rationale": "OPT-03 is safe for fuel.",
             },
+            "pilot_turn3": {
+                "votes": [{"option_id": "OPT-03", "vote": "APPROVE"}],
+                "ranking": ["OPT-03"],
+                "rationale": "OPT-03 is still safe for fuel.",
+            },
         }
     )
     pilot = LLMAgent(

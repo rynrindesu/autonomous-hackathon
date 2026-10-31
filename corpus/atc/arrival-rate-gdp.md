@@ -60,7 +60,12 @@ synthetic airline policy documents in this corpus explain those trade-offs.
 ## Using this in the agent
 
 The ATC agent perceives the NOTAM/METAR text and checks the slot list against
-the reduced AAR. If a slot would push the count over the limit, the option is
-not feasible even when the runway and wake checks pass. The check should cite
+the reduced AAR. In this project the normal AAR is derived from the organisers'
+workbook (challenge-2 workbook: airport_capacity): half of the airport's
+max_runway_ops_per_hour (arrivals and departures share the runways), for
+example 45 arrivals per hour at a large hub with 90 runway operations per hour.
+Weather then cuts it. If a slot is already allocated, or its clock hour is
+already at the reduced rate, the option is not feasible even when the runway
+and wake checks pass (ATC-RWY-01). The check should cite
 this AAR definition and report the value (proposed landings), the limit
 (weather-reduced AAR) and the unit (arrivals per hour or per window).

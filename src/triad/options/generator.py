@@ -26,8 +26,11 @@ def _public_gates(public: PublicEvent) -> list[str]:
 
 
 def _min_turnaround(public: PublicEvent) -> int:
-    ground_cfg = load_yaml("synthetic")["ground"]
-    return int(ground_cfg["min_turnaround_min"][public.aircraft.size_class.value])
+    """Workbook airport_capacity minimum turnaround at the (public) destination."""
+
+    from triad.data.limits import airport_limits
+
+    return int(airport_limits(public.flight.destination).min_turnaround_min)
 
 
 def _propagated_delay(arrival: int, public: PublicEvent) -> int:

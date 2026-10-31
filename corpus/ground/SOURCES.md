@@ -6,9 +6,9 @@
 | `ata-chapters.md` | ATA Spec 100 / iSpec 2200 aircraft chapter list (21–80) | https://en.wikipedia.org/wiki/ATA_100 | ATA Spec 100 / iSpec 2200 numbering | Industry convention; list from public Wikipedia summary (CC BY-SA) | no | no |
 | `b737-mmel-excerpts.md` | Boeing B737 MMEL Rev 63 — illustrative system excerpts | https://www.boeing.com/content/dam/boeing/boeingdotcom/commercial/mmel/B737_MMEL_Rev_63_signed.pdf | B737 MMEL Revision 63, 04/03/2026 | Boeing public MMEL; short training excerpts, not operational | no | yes |
 | `airline-mel-excerpt.md` | Synthetic airline MEL excerpt — six defect entries | — | Triad synthetic corpus v1; mirrors `config/defects.yaml` | Team-written synthetic material | yes | no |
-| `ramp-turnaround.md` | Synthetic ramp turnaround procedure and minimum turnaround times | — | Triad synthetic corpus v1; mirrors `config/synthetic.yaml` | Team-written synthetic material | yes | no |
-| `ramp-crew-shift.md` | Synthetic ramp crew shift and overtime policy | — | Triad synthetic corpus v1; mirrors `config/synthetic.yaml` | Team-written synthetic material | yes | no |
-| `eval.yaml` | Retrieval evaluation queries (20) | — | v1 | Team-written | — | — |
+| `ramp-turnaround.md` | Synthetic ramp turnaround procedure and minimum turnaround times | — | Triad synthetic corpus v2; challenge-2 workbook airport_capacity | Team-written synthetic material | yes | no |
+| `ramp-crew-shift.md` | Synthetic ramp crew shift and overtime policy | — | Triad synthetic corpus v2; challenge-2 workbook fuel_and_crew | Team-written synthetic material | yes | no |
+| `eval.yaml` | Retrieval evaluation queries (20) | — | v2 | Team-written | — | — |
 
 Notes:
 - The B737 MMEL PDF (about 3.4 MB) was downloaded and parsed with `pypdf`.
@@ -17,6 +17,9 @@ Notes:
 - `airline-mel-excerpt.md` is the ground-truth lookup for the six defects in
   `config/defects.yaml`. Its ATA chapter, MEL item, category, deferrable flag and
   repair minutes match the config exactly. Every entry is labelled illustrative.
-- The minimum turnaround values are REGIONAL 30, NARROW 40 and WIDE 75 minutes;
-  the hard crew limit is shift end + 120 minutes with overtime at EUR 6.0/min,
-  all mirroring `config/synthetic.yaml`.
+- Minimum turnaround comes from the organisers' workbook (challenge-2 workbook:
+  airport_capacity): 45 minutes at large hubs, 35 minutes elsewhere.
+- Ramp crew: 8 h shifts, overtime 1.5x the base rate after the shift end, cost
+  only (no hard limit); gate change notice at least 20 minutes before arrival
+  (challenge-2 workbook: fuel_and_crew). Base rate EUR 4.0/min is a synthetic
+  assumption in `config/costs.yaml`.

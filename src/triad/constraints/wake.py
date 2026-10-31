@@ -1,12 +1,12 @@
-"""ATC wake-separation check (ICAO categories only)."""
+"""ATC wake-separation check (ICAO categories; limits from the workbook wake_separation sheet)."""
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
-from triad.config import load_yaml
 from triad.constraints.runway import find_slot
 from triad.constraints.shared import is_divert, make_check
+from triad.data.limits import wake_default_nm, wake_min_nm
 from triad.schemas import AtcPrivate, CandidateOption, ConstraintCheck, PerceivedFact, PublicEvent
 
 
@@ -32,9 +32,7 @@ def check_wake(
             )
         ]
 
-    cfg = load_yaml("constraints")
-    wake_cfg: dict[str, dict[str, float]] = cfg.get("wake_min_nm", {})
-    radar_min = float(cfg.get("radar_min_nm", 3))
+    radar_min = wake_default_nm()  # workbook "any other pair"
 
     slot = find_slot(private.slots, option.runway, option.arrival_slot)
     follower = public.aircraft.wake.value
@@ -56,9 +54,9 @@ def check_wake(
     leader = slot.leader_wake.value if slot.leader_wake is not None else None
     if leader is None:
         required = radar_min
-        detail = f"no wake leader; radar minimum {radar_min:g} NM"
+        detail = f"no wake leader; minimum {radar_min:g} NM (workbook any other pair)"
     else:
-        required = float(wake_cfg.get(leader, {}).get(follower, radar_min))
+        required = wake_min_nm(leader, follower)
         detail = (
             f"leader {slot.leader_type or '?'} ({leader}) -> follower {follower}: "
             f"available {slot.gap_nm:g} NM, required {required:g} NM"

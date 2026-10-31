@@ -42,8 +42,10 @@ of flight segments 1 through 7+:
 | 2300–2359 | 10 | 10 | 10 | 9 | 9 | 9 | 9 |
 
 A delay that extends the FDP past the applicable table value is a hard
-constraint unless an approved extension applies. The check should report the
-planned FDP, the table limit and the start-time band.
+constraint unless an approved extension applies. This project uses the
+organisers' simplified limit instead of Table B (challenge-2 workbook:
+fuel_and_crew): **13 hours from report time**. PLT-FDP-01 reports the duty from
+report to touchdown and the 13-hour (780-minute) limit.
 
 ## Flight time and cumulative limits
 

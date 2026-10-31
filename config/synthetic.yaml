@@ -7,24 +7,26 @@ decision:
   airborne_lead_min: 60        # AIRBORNE: decision this many minutes before expected ETA
   ground_lead_min: 45          # GROUND: decision this many minutes before the (late-adjusted) departure
 
-aircraft_types:                # ICAO wake category (ICAO only), size class, seats, approach speed, burn rates
-  B737: {wake: M, size: NARROW,   seats: 143, vapp_kt: 135, cruise_kg_min: 40, hold_kg_min: 35}
-  B738: {wake: M, size: NARROW,   seats: 162, vapp_kt: 145, cruise_kg_min: 43, hold_kg_min: 38}
-  B739: {wake: M, size: NARROW,   seats: 179, vapp_kt: 149, cruise_kg_min: 45, hold_kg_min: 40}
-  A320: {wake: M, size: NARROW,   seats: 150, vapp_kt: 136, cruise_kg_min: 40, hold_kg_min: 36}
-  A321: {wake: M, size: NARROW,   seats: 190, vapp_kt: 142, cruise_kg_min: 47, hold_kg_min: 41}
-  B752: {wake: M, size: NARROW,   seats: 180, vapp_kt: 137, cruise_kg_min: 55, hold_kg_min: 48}
-  B717: {wake: M, size: NARROW,   seats: 128, vapp_kt: 132, cruise_kg_min: 33, hold_kg_min: 29}
-  E190: {wake: M, size: REGIONAL, seats: 100, vapp_kt: 130, cruise_kg_min: 30, hold_kg_min: 27}
-  E175: {wake: M, size: REGIONAL, seats: 76,  vapp_kt: 125, cruise_kg_min: 28, hold_kg_min: 25}
-  E145: {wake: M, size: REGIONAL, seats: 50,  vapp_kt: 135, cruise_kg_min: 22, hold_kg_min: 20}
-  CRJ2: {wake: M, size: REGIONAL, seats: 50,  vapp_kt: 140, cruise_kg_min: 22, hold_kg_min: 20}
-  CRJ9: {wake: M, size: REGIONAL, seats: 76,  vapp_kt: 140, cruise_kg_min: 27, hold_kg_min: 24}
-  B763: {wake: H, size: WIDE,     seats: 211, vapp_kt: 140, cruise_kg_min: 90, hold_kg_min: 80}
-  B772: {wake: H, size: WIDE,     seats: 300, vapp_kt: 145, cruise_kg_min: 115, hold_kg_min: 100}
-  A332: {wake: H, size: WIDE,     seats: 278, vapp_kt: 140, cruise_kg_min: 95, hold_kg_min: 85}
-  A388: {wake: J, size: WIDE,     seats: 500, vapp_kt: 140, cruise_kg_min: 200, hold_kg_min: 180}
-  C208: {wake: L, size: REGIONAL, seats: 9,   vapp_kt: 90,  cruise_kg_min: 3,  hold_kg_min: 3}
+aircraft_types:                # ICAO wake category (ICAO only), size class, seats, approach speed, cruise burn.
+                               # Holding burn is NOT per type: workbook fuel_and_crew (narrowbody 2,400 kg/h for
+                               # REGIONAL+NARROW, widebody 6,500 kg/h for WIDE) via triad.data.limits.
+  B737: {wake: M, size: NARROW,   seats: 143, vapp_kt: 135, cruise_kg_min: 40}
+  B738: {wake: M, size: NARROW,   seats: 162, vapp_kt: 145, cruise_kg_min: 43}
+  B739: {wake: M, size: NARROW,   seats: 179, vapp_kt: 149, cruise_kg_min: 45}
+  A320: {wake: M, size: NARROW,   seats: 150, vapp_kt: 136, cruise_kg_min: 40}
+  A321: {wake: M, size: NARROW,   seats: 190, vapp_kt: 142, cruise_kg_min: 47}
+  B752: {wake: M, size: NARROW,   seats: 180, vapp_kt: 137, cruise_kg_min: 55}
+  B717: {wake: M, size: NARROW,   seats: 128, vapp_kt: 132, cruise_kg_min: 33}
+  E190: {wake: M, size: REGIONAL, seats: 100, vapp_kt: 130, cruise_kg_min: 30}
+  E175: {wake: M, size: REGIONAL, seats: 76,  vapp_kt: 125, cruise_kg_min: 28}
+  E145: {wake: M, size: REGIONAL, seats: 50,  vapp_kt: 135, cruise_kg_min: 22}
+  CRJ2: {wake: M, size: REGIONAL, seats: 50,  vapp_kt: 140, cruise_kg_min: 22}
+  CRJ9: {wake: M, size: REGIONAL, seats: 76,  vapp_kt: 140, cruise_kg_min: 27}
+  B763: {wake: H, size: WIDE,     seats: 211, vapp_kt: 140, cruise_kg_min: 90}
+  B772: {wake: H, size: WIDE,     seats: 300, vapp_kt: 145, cruise_kg_min: 115}
+  A332: {wake: H, size: WIDE,     seats: 278, vapp_kt: 140, cruise_kg_min: 95}
+  A388: {wake: J, size: WIDE,     seats: 500, vapp_kt: 140, cruise_kg_min: 200}
+  C208: {wake: L, size: REGIONAL, seats: 9,   vapp_kt: 90,  cruise_kg_min: 3}
 
 airline_types:                 # seeded choice among these (2015-plausible fleets)
   WN: [B737, B738]
@@ -55,8 +57,8 @@ leader_type_mix:               # types of other traffic in the arrival sequence:
   - [C208, 0.05]
 
 fuel:
-  contingency_frac: 0.05
-  extra_holding_min_range: [10, 40]     # AIRBORNE: discretionary fuel on board, expressed as holding minutes
+  # Final reserve (30 min holding), contingency (5% trip), spare on arrival (45 min holding, ON TOP of
+  # the final reserve) and holding burns all come from the workbook (config/operational_limits.yaml).
   max_extra_uplift_kg_range: [800, 3000] # GROUND: extra fuel that can still be loaded
   enroute_absorb_max_frac: 0.08         # can absorb up to 8% of remaining flight time by slowing down
   enroute_absorb_burn_saving: 0.03      # slowing down burns ~3% less per minute than cruise
@@ -69,28 +71,39 @@ turbulence:                   # per cruise level, seeded
   probs: {NONE: 0.45, LIGHT: 0.25, MODERATE: 0.20, SEVERE: 0.10}
 
 atc:
-  aar_normal_default: 60      # arrivals/hour (approximate, synthetic)
-  aar_normal: {ATL: 120, ORD: 110, DFW: 110, DEN: 110, LAX: 72, SFO: 54, LAS: 52, IAH: 80, PHX: 64, SEA: 50, LGA: 38, JFK: 52, BOS: 60, MSP: 64, CLT: 82, DTW: 70, EWR: 42, MCO: 60}
+  # Normal arrival rate = arrival_share_of_runway_ops x workbook max_runway_ops_per_hour (destination).
+  # MODELLING ASSUMPTION (not a workbook deviation): the workbook figure counts all runway operations
+  # (arrivals + departures); a balanced hub bank splits them ~50/50.
+  arrival_share_of_runway_ops: 0.5
+  # Active arrival runway ends = workbook active_runways (mixed-mode), bounded by the real runways listed
+  # in config/runways.yaml for that airport.
   weather_reduction:          # [WEATHER_DELAY upper bound in minutes, fraction of AAR lost]
     - [45, 0.20]
     - [120, 0.35]
     - [100000, 0.50]
   slot_horizon_min: 120       # generate arrival slots this far past expected ETA
-  taken_slot_frac: 0.30       # fraction of slots already allocated to other traffic
+  # Background traffic per clock hour = max(real same-airport arrivals in flights.csv that hour (delayed
+  # flights only, so a lower bound), seeded fill = (U(range) - decay x hours after the ETA hour) x reduced
+  # arrival rate).  An hour whose background traffic reaches the
+  # reduced rate is AT CAPACITY: all its slots are marked taken.  Otherwise the background arrivals
+  # occupy that many slots and ATC-RWY-01 still enforces the hourly cap.
+  background_util_range: [0.50, 1.05]
+  background_decay_per_hour: 0.15   # demand eases by this fraction of the rate per hour after the ETA hour
   closed_taxiway_prob: 0.35   # chance one taxiway is NOTAM-closed
 
 ground:
+  # Modelled gate subset (carrier + common-use) of the workbook `gates` total, capped by that total.
+  # At least workbook spare_gates_at_any_time of the modelled gates are kept free over the planned
+  # turnaround window.  min_turnaround_min comes from the workbook (destination airport).
   gates_per_carrier: 6
   common_use_gates: 3
   gate_occupancy_frac: 0.35    # fraction of gates with an occupancy window overlapping the arrival period
   gate_buffer_min: 10
-  min_turnaround_min: {REGIONAL: 30, NARROW: 40, WIDE: 75}
-  shift_templates:            # minutes of day
-    - {shift_id: EARLY, start: 300,  end: 780}
-    - {shift_id: LATE,  start: 780,  end: 1320}
-    - {shift_id: NIGHT, start: 1320, end: 1740}
-  hard_limit_extra_min: 120   # company/labour hard limit beyond normal shift end
-  overtime_eur_per_min: 6.0   # whole turnaround team
+  shift_templates:            # start, minutes of day; length = workbook ground crew shift (8 h = 480 min)
+    - {shift_id: EARLY, start: 300}
+    - {shift_id: LATE,  start: 780}
+    - {shift_id: NIGHT, start: 1260}
+  # No hard ground-crew limit (workbook: overtime is a cost only); base rate in config/costs.yaml.
   spare_aircraft_prob: 0.25
   defect_prob_ground_mode: 0.35
   taxiways: [A, B, C, D, E, F, K, L, M]
@@ -108,4 +121,8 @@ alternates:
   max_candidates: 3
 
 pilot:
-  crew_duty_remaining_range: [90, 300]
+  # Flight crew report time (workbook max duty 13 h from report).  Report = min(first-leg departure - 60,
+  # scheduled arrival + margin - 780): crews on a short day report 60 min before this leg; on a
+  # multi-leg day they reported earlier, leaving `margin` minutes of duty at the scheduled arrival.
+  report_before_departure_min: 60
+  duty_margin_at_sched_arrival_range: [150, 420]

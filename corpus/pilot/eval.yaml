@@ -33,7 +33,7 @@ queries:
     expect: pilot-fuel-policy-synthetic-01
   - query: "minimum fuel declare emergency threshold final reserve"
     expect: pilot-fuel-policy-synthetic-03
-  - query: "discretionary holding fuel 10 to 40 minutes"
+  - query: "spare fuel on arrival 45 minutes of holding on top of final reserve"
     expect: pilot-fuel-policy-synthetic-01
   - query: "minimum connection time ATL 35 minutes"
     expect: pilot-connections-synthetic-01

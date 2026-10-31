@@ -37,3 +37,5 @@ queries:
     expect: atc-airport-operations-notes-01
   - query: "expired NOTAM closure is not effective for this arrival"
     expect: atc-notam-decoding-02
+  - query: "workbook large leading small 4 NM any other pair 3 NM"
+    expect: atc-wake-separation-05

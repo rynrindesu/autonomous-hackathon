@@ -1,16 +1,11 @@
 # Flight Dataset Schema
-
 2015 US domestic flights — airlines, airports, and flight records
 
-3tables
+## 3 tables
 
-358,774flight records
+358,774 flight records, 322 airports, 14 airlines
 
-322airports
-
-14airlines
-
-Entity Relationship Diagram
+## Entity Relationship Diagram
 
 ```mermaid
 erDiagram
@@ -43,22 +38,22 @@ erDiagram
       
 ```
 
-Foreign Key Relationships
+## Foreign Key Relationships
 
 - FLIGHTS .AIRLINE → AIRLINES .IATA_CODE many-to-one Operating carrier
 - FLIGHTS .ORIGIN_AIRPORT → AIRPORTS .IATA_CODE many-to-one Departure airport
 - FLIGHTS .DESTINATION_AIRPORT → AIRPORTS .IATA_CODE many-to-one Arrival airport
 
-Table Definitions
+## Table Definitions
 
-AIRLINES 14 rows
+### AIRLINES 14 rows
 
 | Column | Type | Description |
 | --- | --- | --- |
 | IATA_CODE PK | VARCHAR(2) | Two-letter IATA airline code (e.g. `AA`, `UA`) |
 | AIRLINE | VARCHAR | Full airline name |
 
-AIRPORTS 322 rows
+### AIRPORTS 322 rows
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -70,7 +65,7 @@ AIRPORTS 322 rows
 | LATITUDE | FLOAT | Geographic latitude in decimal degrees |
 | LONGITUDE | FLOAT | Geographic longitude in decimal degrees |
 
-FLIGHTS 358,774 rows
+### FLIGHTS 358,774 rows
 
 | Column | Type | Description |
 | --- | --- | --- |

@@ -10,9 +10,15 @@ from triad.schemas import AgentRole, CandidateOption, ConstraintCheck, PublicEve
 class UnsafeCommitError(Exception):
     """Raised when a commit would violate a hard constraint."""
 
-    def __init__(self, message: str, failed: list[ConstraintCheck] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        failed: list[ConstraintCheck] | None = None,
+        checks: list[ConstraintCheck] | None = None,
+    ) -> None:
         super().__init__(message)
         self.failed = failed or []
+        self.checks = checks or list(self.failed)
 
 
 def assert_commit_safe(
@@ -30,5 +36,5 @@ def assert_commit_safe(
     failed = [c for c in checks if c.hard and not c.passed]
     if failed:
         ids = ", ".join(f"{c.owner}:{c.constraint_id}({c.option_id})" for c in failed)
-        raise UnsafeCommitError(f"unsafe commit for {option.option_id}: {ids}", failed)
+        raise UnsafeCommitError(f"unsafe commit for {option.option_id}: {ids}", failed, checks)
     return checks

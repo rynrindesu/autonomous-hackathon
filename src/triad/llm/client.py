@@ -5,6 +5,7 @@ Environment (.env, then process env):
   LLM_MODEL      default x-test-2
   LLM_API_KEY    falls back to SOCLAAS_API_KEY
   LLM_TIMEOUT_S  default 90
+  LLM_MAX_TOKENS default 1500 (caps runaway generations; 0 disables)
   LLM_CACHE      "0"/"false" disables the cache
 
 API keys are never logged or written to the cache.
@@ -26,6 +27,7 @@ from triad.config import CACHE_DIR, ROOT
 DEFAULT_BASE_URL = "https://soclaas-api.comp.nus.edu.sg/v1"
 DEFAULT_MODEL = "qwen3.6:35b"
 DEFAULT_TIMEOUT_S = 90.0
+DEFAULT_MAX_TOKENS = 1500
 
 
 class LLMError(RuntimeError):
@@ -71,6 +73,8 @@ class LLMClient:
         self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("SOCLAAS_API_KEY") or ""
         raw_timeout = os.getenv("LLM_TIMEOUT_S")
         self.timeout = float(timeout if timeout is not None else (raw_timeout or DEFAULT_TIMEOUT_S))
+        raw_max = os.getenv("LLM_MAX_TOKENS")
+        self.max_tokens = int(raw_max) if raw_max not in (None, "") else DEFAULT_MAX_TOKENS
         self.cache = bool(cache) and _env_bool("LLM_CACHE", True)
         self.cache_dir = Path(cache_dir)
         self._transport = transport
@@ -171,6 +175,8 @@ class LLMClient:
                 "seed": 7,
                 "response_format": response_format,
             }
+            if self.max_tokens > 0:
+                kwargs["max_tokens"] = self.max_tokens
             started = time.perf_counter()
             try:
                 content, usage = self._invoke(kwargs)

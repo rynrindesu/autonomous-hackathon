@@ -45,6 +45,7 @@ class Orchestrator:
         | None = None,
         max_turns: int = 2,
         failover_factory: Callable[[Any], Any] | None = None,
+        run_flags: Mapping[str, Any] | None = None,
     ) -> None:
         assert max_turns == 2, "the protocol is hard-capped at two turns"
         self.public = public
@@ -55,6 +56,7 @@ class Orchestrator:
         self._failover_factory = failover_factory
         self._next_shared_id = CheckIdGen("SHR")
         self._all_options: list[CandidateOption] = []
+        self._run_flags: dict[str, Any] = dict(run_flags or {})
 
     # ------------------------------------------------------------------ lazy WORLD deps
     def _generate(self, public: PublicEvent) -> list[CandidateOption]:
@@ -85,13 +87,37 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ entry point
     def run(self, ai_off: bool = False) -> Resolution:
-        options = self._setup()
+        options = self._setup(ai_off=ai_off)
         if ai_off:
             return self._run_ai_off(options)
         return self._run_negotiation(options)
 
     # ------------------------------------------------------------------ setup (turn 0)
-    def _setup(self) -> list[CandidateOption]:
+    def _flags(self, ai_off: bool) -> dict[str, Any]:
+        impls = {role.value: str(getattr(self.agents[role], "impl", "unknown")) for role in TURN_ORDER}
+        models = {
+            role.value: str(
+                getattr(getattr(self.agents[role], "client", None), "model", None) or impls[role.value]
+            )
+            for role in TURN_ORDER
+        }
+        derived_impl = "llm" if any(v.startswith("llm") for v in impls.values()) else (
+            impls[AgentRole.ATC.value] if len(set(impls.values())) == 1 else "mixed"
+        )
+        flags: dict[str, Any] = {
+            "impl": derived_impl,
+            "red_team": False,
+            "ai_off": ai_off,
+            "defect_id": None,
+            "seed": None,
+        }
+        flags.update(self._run_flags)
+        flags["ai_off"] = ai_off
+        flags["models"] = models
+        flags["agent_impl"] = impls
+        return flags
+
+    def _setup(self, ai_off: bool = False) -> list[CandidateOption]:
         public = self.public
         self.log.append(
             0,
@@ -104,6 +130,8 @@ class Orchestrator:
                 "decision_time": public.decision_time,
                 "original_eta": public.original_eta,
                 "expected_eta": public.expected_eta,
+                "public": public.model_dump(mode="json"),
+                "flags": self._flags(ai_off),
             },
         )
         raw = list(self._generate(public))
@@ -138,7 +166,33 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ AI off
     def _run_ai_off(self, options: list[CandidateOption]) -> Resolution:
-        feasible = [o for o in options if self._passes_all_agents(o)]
+        feasible: list[CandidateOption] = []
+        for option in options:
+            per_agent: dict[str, Any] = {}
+            dumped: list[dict[str, Any]] = []
+            for role in TURN_ORDER:
+                checks = list(self.agents[role].check(self.public, option))
+                failed = _failing(checks)
+                per_agent[role.value] = {
+                    "passed": not failed,
+                    "failed_constraint_ids": _constraint_ids(failed),
+                    "failed_check_ids": [c.check_id for c in failed],
+                }
+                dumped.extend(c.model_dump(mode="json") for c in checks)
+            passed = all(item["passed"] for item in per_agent.values())
+            self.log.append(
+                0,
+                "ORCHESTRATOR",
+                "AGENT_CHECKS",
+                {
+                    "option_id": option.option_id,
+                    "passed": passed,
+                    "agents": per_agent,
+                    "checks": dumped,
+                },
+            )
+            if passed:
+                feasible.append(option)
         if not feasible:
             return self._escalate(
                 turn=0,
@@ -176,15 +230,20 @@ class Orchestrator:
         proposals: dict[AgentRole, ProposalMessage] = {}
         turn1_results = self._collect_turn1(options)
         for role in TURN_ORDER:
-            agent, message, manifest = turn1_results[role]
+            agent, _message, _context, perception = turn1_results[role]
+            self._log_perception(role, agent, perception)
+        for role in TURN_ORDER:
+            agent, message, context, _perception = turn1_results[role]
             proposals[role] = message
+            payload = message.model_dump(mode="json")
+            payload["context"] = {role.value: context["breakdown"]}
             self.log.append(
                 1,
                 role.value,
                 "PROPOSAL",
-                message.model_dump(mode="json"),
-                context_manifest={role.value: manifest},
-                usage=self._usage_payload(agent),
+                payload,
+                context_manifest={role.value: context["combined"]},
+                usage=self._usage_payload(agent, "turn1"),
             )
 
         # ---- code truth, never the veto list
@@ -201,20 +260,23 @@ class Orchestrator:
                 for o in options
                 if any(c.hard and not c.passed for c in table[(role, o.option_id)])
             }
-            declared = {v.option_id for v in message.vetoes}
-            for oid in sorted(declared - code_failed):
-                self.log.append(
+            declared = {v.option_id: v for v in message.vetoes}
+            for oid in sorted(set(declared) - code_failed):
+                self._safety_block(
                     1,
-                    "ORCHESTRATOR",
-                    "SAFETY_BLOCK",
-                    {"role": role.value, "option_id": oid, "detail": "fabricated veto"},
+                    role=role.value,
+                    option_id=oid,
+                    detail="fabricated veto",
+                    failing=[],
+                    claimed_constraint_id=declared[oid].constraint_id,
                 )
-            for oid in sorted(code_failed - declared):
-                self.log.append(
+            for oid in sorted(code_failed - set(declared)):
+                self._safety_block(
                     1,
-                    "ORCHESTRATOR",
-                    "SAFETY_BLOCK",
-                    {"role": role.value, "option_id": oid, "detail": "omitted veto"},
+                    role=role.value,
+                    option_id=oid,
+                    detail="omitted veto",
+                    failing=_failing(table[(role, oid)]),
                 )
 
         feasible = [o for o in options if self._passes_all(o, table)]
@@ -304,15 +366,17 @@ class Orchestrator:
         ballots: dict[AgentRole, BallotMessage] = {}
         turn2_results = self._collect_turn2(shortlist, summaries, fallback_projection)
         for role in TURN_ORDER:
-            agent, ballot, manifest = turn2_results[role]
+            agent, ballot, context = turn2_results[role]
             ballots[role] = ballot
+            payload = ballot.model_dump(mode="json")
+            payload["context"] = {role.value: context["breakdown"]}
             self.log.append(
                 2,
                 role.value,
                 "BALLOT",
-                ballot.model_dump(mode="json"),
-                context_manifest={role.value: manifest},
-                usage=self._usage_payload(agent),
+                payload,
+                context_manifest={role.value: context["combined"]},
+                usage=self._usage_payload(agent, "turn2"),
             )
 
         # ---- honour only shortlisted, code-safe approvals
@@ -329,28 +393,22 @@ class Orchestrator:
             for vote in ballot.votes:
                 if vote.option_id not in shortlist_ids:
                     if vote.vote == "APPROVE":
-                        self.log.append(
+                        self._safety_block(
                             2,
-                            "ORCHESTRATOR",
-                            "SAFETY_BLOCK",
-                            {
-                                "role": role.value,
-                                "option_id": vote.option_id,
-                                "detail": "approve outside shortlist",
-                            },
+                            role=role.value,
+                            option_id=vote.option_id,
+                            detail="approve outside shortlist",
+                            failing=self._known_failures(vote.option_id, table, counters),
                         )
                     continue
                 if vote.vote == "APPROVE":
                     if vote.option_id not in safe_shortlist:
-                        self.log.append(
+                        self._safety_block(
                             2,
-                            "ORCHESTRATOR",
-                            "SAFETY_BLOCK",
-                            {
-                                "role": role.value,
-                                "option_id": vote.option_id,
-                                "detail": "approve of unsafe option",
-                            },
+                            role=role.value,
+                            option_id=vote.option_id,
+                            detail="approve of unsafe option",
+                            failing=_failing(shortlist_checks[vote.option_id]),
                         )
                         continue
                     allowed.add(vote.option_id)
@@ -424,15 +482,67 @@ class Orchestrator:
                     results[role] = exc
         return results
 
-    def _usage_payload(self, agent: Any) -> dict[str, Any] | None:
-        usage = getattr(agent, "last_usage", None)
+    def _usage_payload(self, agent: Any, label: str) -> dict[str, Any] | None:
+        getter = getattr(agent, "usage_for", None)
+        usage = getter(label) if callable(getter) else getattr(agent, "last_usage", None)
         if not usage:
             return None
-        return {agent.role.value: usage}
+        return {agent.role.value: dict(usage)}
+
+    def _log_perception(self, role: AgentRole, agent: Any, perception: dict[str, Any]) -> None:
+        facts = perception.get("facts") or []
+        self.log.append(
+            1,
+            role.value,
+            "PERCEPTION",
+            {
+                "role": role.value,
+                "impl": str(getattr(agent, "impl", "unknown")),
+                "failover": bool(perception.get("failover")),
+                "n_conservative_defaults": sum(1 for f in facts if f.get("conservative_default")),
+                "facts": facts,
+            },
+            usage=self._usage_payload(agent, "perceive"),
+        )
+        for finding in perception.get("injections") or []:
+            self.log.append(
+                1,
+                role.value,
+                "INJECTION_DETECTED",
+                {
+                    "role": role.value,
+                    "agent": role.value,
+                    "kind": finding.get("kind"),
+                    "note": finding.get("note"),
+                    "phrases": list(finding.get("phrases") or []),
+                    "handling": "treated as data; hard constraints are checked in code",
+                },
+            )
+
+    def _perception_summary(
+        self, original: Any, agent: Any, failover: bool
+    ) -> dict[str, Any]:
+        try:
+            facts = list(agent.perceive(self.public) or [])
+        except Exception:  # noqa: BLE001 - logging must never break a run
+            facts = []
+        summary = [
+            {
+                "key": fact.key,
+                "value": fact.value,
+                "source": fact.source,
+                "confidence": fact.confidence,
+                "citation": fact.citation.chunk_id if fact.citation is not None else None,
+                "conservative_default": fact.conservative_default,
+            }
+            for fact in facts
+        ]
+        injections = list(getattr(original, "injection_findings", None) or [])
+        return {"facts": summary, "injections": injections, "failover": failover}
 
     def _collect_turn1(
         self, options: list[CandidateOption]
-    ) -> dict[AgentRole, tuple[Any, ProposalMessage, str]]:
+    ) -> dict[AgentRole, tuple[Any, ProposalMessage, dict[str, Any], dict[str, Any]]]:
         known = {o.option_id for o in options}
 
         def attempt(role: AgentRole) -> tuple[Any, ProposalMessage | None, Exception | None]:
@@ -445,13 +555,15 @@ class Orchestrator:
                 return agent, None, exc
 
         raw = self._parallel(attempt)
-        results: dict[AgentRole, tuple[Any, ProposalMessage, str]] = {}
+        results: dict[AgentRole, tuple[Any, ProposalMessage, dict[str, Any], dict[str, Any]]] = {}
         for role in TURN_ORDER:
             item = raw[role]
             if isinstance(item, Exception):
                 agent, message, exc = self.agents[role], None, item
             else:
                 agent, message, exc = item
+            original = agent
+            failed_over = exc is not None or message is None
             if exc is not None or message is None:
                 self.log.append(
                     1,
@@ -467,10 +579,11 @@ class Orchestrator:
                 self.agents[role] = agent
                 message = agent.turn1(self.public, options)
                 self._validate_proposal(role, message, known)
-            manifest = self._context_manifest(
+            context = self._context_manifest(
                 role, 1, {"kind": "turn1", "options": _dump(options)}, agent
             )
-            results[role] = (agent, message, manifest)
+            perception = self._perception_summary(original, agent, failed_over)
+            results[role] = (agent, message, context, perception)
         return results
 
     def _collect_turn2(
@@ -478,7 +591,7 @@ class Orchestrator:
         shortlist: list[CandidateOption],
         summaries: list[PublicSummary],
         fallback_option: CandidateOption | None = None,
-    ) -> dict[AgentRole, tuple[Any, BallotMessage, str]]:
+    ) -> dict[AgentRole, tuple[Any, BallotMessage, dict[str, Any]]]:
         shortlist_ids = [o.option_id for o in shortlist]
         known = set(shortlist_ids) | {o.option_id for o in self._all_options}
 
@@ -497,7 +610,7 @@ class Orchestrator:
                 return agent, None, exc
 
         raw = self._parallel(attempt)
-        results: dict[AgentRole, tuple[Any, BallotMessage, str]] = {}
+        results: dict[AgentRole, tuple[Any, BallotMessage, dict[str, Any]]] = {}
         for role in TURN_ORDER:
             item = raw[role]
             if isinstance(item, Exception):
@@ -524,13 +637,20 @@ class Orchestrator:
                     fallback_option=fallback_option,
                 )
                 self._validate_ballot(role, ballot, shortlist_ids, known)
-            manifest = self._context_manifest(
+            context = self._context_manifest(
                 role,
                 2,
-                {"kind": "turn2", "shortlist": _dump(shortlist), "summaries": _dump(summaries)},
+                {
+                    "kind": "turn2",
+                    "shortlist": _dump(shortlist),
+                    "summaries": _dump([s for s in summaries if s.sender != role]),
+                    "fallback_option": (
+                        fallback_option.model_dump(mode="json") if fallback_option is not None else None
+                    ),
+                },
                 agent,
             )
-            results[role] = (agent, ballot, manifest)
+            results[role] = (agent, ballot, context)
         return results
 
     # ------------------------------------------------------------------ validation
@@ -599,7 +719,12 @@ class Orchestrator:
                     1,
                     "ORCHESTRATOR",
                     "COUNTER_REJECTED",
-                    {"role": role.value, "base_option_id": counter.base_option_id, "error": error},
+                    {
+                        "role": role.value,
+                        "base_option_id": counter.base_option_id,
+                        "changes": counter.changes,
+                        "error": error,
+                    },
                 )
                 continue
             checks = list(self._shared(candidate))
@@ -614,18 +739,17 @@ class Orchestrator:
                     {
                         "role": role.value,
                         "option_id": candidate.option_id,
+                        "base_option_id": candidate.base_option_id,
+                        "option": candidate.model_dump(mode="json"),
                         "failing_checks": [c.model_dump(mode="json") for c in failures],
                     },
                 )
-                self.log.append(
+                self._safety_block(
                     1,
-                    "ORCHESTRATOR",
-                    "SAFETY_BLOCK",
-                    {
-                        "role": role.value,
-                        "option_id": candidate.option_id,
-                        "detail": "unsafe counter rejected",
-                    },
+                    role=role.value,
+                    option_id=candidate.option_id,
+                    detail="unsafe counter rejected",
+                    failing=failures,
                 )
                 continue
             counters.append(candidate)
@@ -637,6 +761,7 @@ class Orchestrator:
                     "role": role.value,
                     "option_id": candidate.option_id,
                     "base_option_id": candidate.base_option_id,
+                    "option": candidate.model_dump(mode="json"),
                     "checks": [c.model_dump(mode="json") for c in checks],
                 },
             )
@@ -689,13 +814,17 @@ class Orchestrator:
                     self.public, option, self.agents, self._shared_call, self._next_shared_id
                 )
             except UnsafeCommitError as exc:
-                self.log.append(
+                self._commit_gate(turn, option, exc.checks, exc.failed)
+                self._safety_block(
                     turn,
-                    "ORCHESTRATOR",
-                    "SAFETY_BLOCK",
-                    {"option_id": option.option_id, "detail": "commit re-check failed", "error": str(exc)},
+                    role=None,
+                    option_id=option.option_id,
+                    detail="commit re-check failed",
+                    failing=exc.failed,
+                    error=str(exc),
                 )
                 continue
+            self._commit_gate(turn, option, checks, [])
 
             final_status = status
             final_decided_by = decided_by
@@ -761,14 +890,74 @@ class Orchestrator:
             costs_eur={},
         )
 
-    # ------------------------------------------------------------------ misc helpers
-    def _passes_all_agents(self, option: CandidateOption) -> bool:
-        for role in TURN_ORDER:
-            checks = self.agents[role].check(self.public, option)
-            if any(c.hard and not c.passed for c in checks):
-                return False
-        return True
+    def _commit_gate(
+        self,
+        turn: int,
+        option: CandidateOption,
+        checks: list[ConstraintCheck],
+        failed: list[ConstraintCheck],
+    ) -> None:
+        self.log.append(
+            turn,
+            "ORCHESTRATOR",
+            "COMMIT_GATE",
+            {
+                "option_id": option.option_id,
+                "passed": not failed,
+                "n_checks": len(checks),
+                "failed": [
+                    {
+                        "check_id": c.check_id,
+                        "constraint_id": c.constraint_id,
+                        "owner": str(c.owner),
+                        "detail": c.detail,
+                    }
+                    for c in failed
+                ],
+            },
+        )
 
+    def _safety_block(
+        self,
+        turn: int,
+        *,
+        role: str | None,
+        option_id: str,
+        detail: str,
+        failing: list[ConstraintCheck],
+        **extra: Any,
+    ) -> None:
+        payload: dict[str, Any] = {}
+        if role is not None:
+            payload["role"] = role
+        payload.update(
+            {
+                "agent": role,
+                "option_id": option_id,
+                "detail": detail,
+                "constraint_ids": _constraint_ids(failing),
+                "check_ids": [c.check_id for c in failing],
+            }
+        )
+        payload.update(extra)
+        self.log.append(turn, "ORCHESTRATOR", "SAFETY_BLOCK", payload)
+
+    def _known_failures(
+        self,
+        option_id: str,
+        table: dict[tuple[AgentRole, str], list[ConstraintCheck]],
+        counters: list[CandidateOption],
+    ) -> list[ConstraintCheck]:
+        """Failing hard checks of an option outside the shortlist (if it is known)."""
+        if all((role, option_id) in table for role in TURN_ORDER):
+            return [c for role in TURN_ORDER for c in _failing(table[(role, option_id)])]
+        known = {o.option_id: o for o in list(self._all_options) + list(counters)}
+        option = known.get(option_id)
+        if option is None:
+            return []
+        return _failing(self._checks_for_all(option))
+
+    # ------------------------------------------------------------------ misc helpers
     def _passes_all(
         self,
         option: CandidateOption,
@@ -827,19 +1016,32 @@ class Orchestrator:
         turn: int,
         inputs: dict[str, Any],
         agent: Any,
-    ) -> str:
-        return sha256_json(
-            {
-                "role": role.value,
-                "turn": turn,
-                "public": self.public.model_dump(mode="json"),
-                "inputs": inputs,
-                "private_fingerprint": agent.private_fingerprint(),
-            }
+    ) -> dict[str, Any]:
+        """Hash exactly what ``role`` saw this turn: public part + its own private part."""
+        public_sha = sha256_json({"public": self.public.model_dump(mode="json"), "inputs": inputs})
+        private_sha = str(agent.private_fingerprint())
+        combined = sha256_json(
+            {"role": role.value, "turn": turn, "public_sha": public_sha, "private_sha": private_sha}
         )
+        return {
+            "combined": combined,
+            "breakdown": {"public_sha": public_sha, "private_sha": private_sha},
+        }
 
     def _first_alternate(self) -> str:
         return self.public.alternate_candidates[0] if self.public.alternate_candidates else "nearest suitable airport"
+
+
+def _failing(checks: list[ConstraintCheck]) -> list[ConstraintCheck]:
+    return [c for c in checks if c.hard and not c.passed]
+
+
+def _constraint_ids(checks: list[ConstraintCheck]) -> list[str]:
+    out: list[str] = []
+    for check in checks:
+        if check.constraint_id not in out:
+            out.append(check.constraint_id)
+    return out
 
 
 def _dump(models: list[Any]) -> list[dict[str, Any]]:

@@ -105,7 +105,8 @@ def _execute(
     if not ai_off:
         _prefetch_perception(agents, event.public)
     log = ConsensusLog(record.run_id, run_dir)
-    orchestrator = Orchestrator(event.public, agents, log)
+    run_flags = {"impl": impl, "red_team": red_team, "defect_id": defect_id, "seed": seed}
+    orchestrator = Orchestrator(event.public, agents, log, run_flags=run_flags)
     resolution = orchestrator.run(ai_off=ai_off)
     return record, event, agents, resolution, log
 
@@ -283,14 +284,17 @@ def _print_summary(record, event, resolution: Resolution, log: ConsensusLog, age
 
     _print_perception(log)
     _print_llm_usage(log, agents)
+    _print_red_team(log)
 
-    blocks = [e for e in log.entries if e.event == "SAFETY_BLOCK"]
-    if blocks:
+    gates = [e for e in log.entries if e.event == "COMMIT_GATE"]
+    if gates:
         print()
-        print("  Safety blocks")
-        for entry in blocks:
+        print("  Commit gate (assert_commit_safe re-runs every check)")
+        for entry in gates:
             p = entry.payload
-            print(f"    turn {entry.turn}: {p.get('detail', '?')} ({p.get('option_id', '-')})")
+            failed = ", ".join(f.get("constraint_id", "?") for f in p.get("failed", [])) or "-"
+            verdict = "PASS" if p.get("passed") else f"BLOCKED [{failed}]"
+            print(f"    {p.get('option_id', '-')}: {verdict} ({p.get('n_checks', 0)} checks)")
 
     print()
     if resolution.option is None:
@@ -309,22 +313,66 @@ def _print_summary(record, event, resolution: Resolution, log: ConsensusLog, age
     print(f"  Log: {len(log.entries)} entries, chain {'OK' if ConsensusLog.verify(log.entries) else 'BROKEN'}")
 
 
+_ROLE_NAMES = {"ATC": "ATC", "PILOT": "Pilot", "GROUND": "Ground"}
+
+
 def _print_perception(log: ConsensusLog) -> None:
-    entries = [e for e in log.entries if e.event == "PROPOSAL"]
-    facts = [(e.actor, f) for e in entries for f in e.payload.get("facts", [])]
+    entries = [e for e in log.entries if e.event == "PERCEPTION"]
+    if entries:
+        facts = [(e.actor, f) for e in entries for f in e.payload.get("facts", [])]
+    else:
+        entries = [e for e in log.entries if e.event == "PROPOSAL"]
+        facts = [(e.actor, f) for e in entries for f in e.payload.get("facts", [])]
     if not facts:
         return
     print()
     print("  Perceived facts")
     for actor, fact in facts:
-        citation = fact.get("citation") or {}
+        citation = fact.get("citation")
+        if isinstance(citation, dict):
+            citation = citation.get("chunk_id")
         value = json.dumps(fact.get("value"), sort_keys=True, default=str)
         if len(value) > 72:
             value = value[:69] + "..."
+        default = " CONSERVATIVE_DEFAULT" if fact.get("conservative_default") else ""
         print(
             f"    {actor:<6} {fact.get('key', '?'):<16} {value:<74}"
-            f" [{fact.get('source', '?')}] cite={citation.get('chunk_id', '-')}"
+            f" [{fact.get('source', '?')}] cite={citation or '-'}{default}"
         )
+
+
+def _print_red_team(log: ConsensusLog) -> None:
+    injections = [e for e in log.entries if e.event == "INJECTION_DETECTED"]
+    blocks = [e for e in log.entries if e.event == "SAFETY_BLOCK"]
+    setup = next((e for e in log.entries if e.event == "SETUP"), None)
+    red_team = bool(((setup.payload.get("flags") or {}) if setup else {}).get("red_team"))
+    if not (injections or blocks or red_team):
+        return
+
+    print()
+    print("  [1] Text injection (untrusted free text reaching an agent's perception)")
+    if injections:
+        for entry in injections:
+            p = entry.payload
+            who = _ROLE_NAMES.get(str(p.get("role") or entry.actor), entry.actor)
+            print(f"    Injection attempt in {who} input — treated as data")
+            print(f"      note: {p.get('note', '')!r}")
+            print(f"      trigger phrases: {', '.join(p.get('phrases', [])) or '-'}")
+    else:
+        print("    none detected")
+
+    print("  [2] Compromised agent output (blocked by the orchestrator's code checks)")
+    if blocks:
+        for entry in blocks:
+            p = entry.payload
+            who = p.get("agent") or p.get("role") or "commit"
+            ids = ", ".join(p.get("constraint_ids") or []) or "no failing check"
+            print(
+                f"    SAFETY_BLOCK turn {entry.turn} {who}: {p.get('detail', '?')}"
+                f" ({p.get('option_id', '-')}) [{ids}]"
+            )
+    else:
+        print("    none")
 
 
 def _print_llm_usage(log: ConsensusLog, agents) -> None:

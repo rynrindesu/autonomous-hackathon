@@ -22,6 +22,7 @@ from triad.agents.llm_schemas import (
     Turn2Decision,
 )
 from triad.agents.perception import conservative_facts, stub_perceive
+from triad.agents.stub import red_team_ranking, red_team_votes
 from triad.schemas import (
     AgentRole,
     BallotMessage,
@@ -37,6 +38,7 @@ from triad.schemas import (
     PublicSummary,
     Veto,
     Vote,
+    fmt_hhmm,
 )
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -56,6 +58,19 @@ _COUNTER_FIELDS = {
     AgentRole.GROUND: {"gate", "next_leg_action", "next_leg_delay_min"},
 }
 _SAFETY_NOTE = "perception signal weak; conservative default applied"
+# Free-text inputs that come from people outside the operation (untrusted).
+_UNTRUSTED_KINDS = {"pax_note"}
+_INJECTION_PATTERNS = (
+    ("regardless", re.compile(r"\bregardless\b", re.IGNORECASE)),
+    ("ignore", re.compile(r"\bignor(?:e|ing)\b", re.IGNORECASE)),
+    ("land immediately", re.compile(r"\bland\s+immediately\b", re.IGNORECASE)),
+    ("override", re.compile(r"\boverrid(?:e|ing)\b", re.IGNORECASE)),
+    ("no matter what", re.compile(r"\bno\s+matter\s+what\b", re.IGNORECASE)),
+)
+_SENTENCE_END = re.compile(r"[.!?](?=[\s\"')\]]|$)")
+_HHMM = re.compile(r"^\s*(\d{1,2}):(\d{2})(?:\s*\+\s*(\d+))?\s*$")
+_TIME_FIELDS = ("arrival_slot", "departure_slot")
+_USAGE_KEYS = ("model", "prompt_tokens", "completion_tokens", "ms", "cached", "repaired")
 
 
 @lru_cache(maxsize=None)
@@ -87,9 +102,86 @@ def _data(text: str) -> str:
     return str(text).replace("</", "<\\/")
 
 
-def _truncate_words(text: str, limit: int) -> str:
-    words = str(text or "").split()
-    return " ".join(words[:limit])
+def trim_rationale(text: Any, max_chars: int = 400) -> str:
+    """Normalise whitespace and never cut mid-sentence.
+
+    Text that fits is returned whole.  Longer text is cut at the last sentence
+    boundary inside ``max_chars``; only if no boundary fits is it cut at a word
+    boundary with a trailing ellipsis.
+    """
+    clean = " ".join(str(text or "").split())
+    if len(clean) <= max_chars:
+        return clean
+    window = clean[: max_chars + 1]
+    ends = [m.end() for m in _SENTENCE_END.finditer(window) if m.end() <= max_chars]
+    if ends and ends[-1] >= min(40, max_chars // 4):
+        return clean[: ends[-1]].strip()
+    cut = clean[: max_chars - 1]
+    space = cut.rfind(" ")
+    if space > 0:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:-") + "\u2026"
+
+
+def detect_injection(reports: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Code heuristic: flag instruction-like text in untrusted free-text inputs."""
+    findings: list[dict[str, Any]] = []
+    for kind, text in reports:
+        if kind not in _UNTRUSTED_KINDS:
+            continue
+        phrases = [label for label, pattern in _INJECTION_PATTERNS if pattern.search(text)]
+        if phrases:
+            findings.append({"kind": kind, "note": text, "phrases": phrases})
+    return findings
+
+
+def parse_hhmm(value: Any, reference: int | None = None) -> int:
+    """Turn an LLM-supplied clock value ("HH:MM", "HH:MM+1" or minutes) into minutes."""
+    if isinstance(value, bool):
+        raise ValueError("bool is not a time")
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip()
+    if text.lstrip("-").isdigit():
+        return int(text)
+    match = _HHMM.match(text)
+    if match is None:
+        raise ValueError(f"not a HH:MM time: {value!r}")
+    hours, minutes = int(match.group(1)), int(match.group(2))
+    if hours > 23 or minutes > 59:
+        raise ValueError(f"not a HH:MM time: {value!r}")
+    base = hours * 60 + minutes
+    if match.group(3) is not None:
+        return int(match.group(3)) * 1440 + base
+    if reference is None:
+        return base
+    return min((base + day * 1440 for day in range(3)), key=lambda t: (abs(t - reference), t))
+
+
+def _round2(value: Any) -> float:
+    return round(float(value or 0.0), 2)
+
+
+def option_row(option: CandidateOption) -> dict[str, Any]:
+    """Prompt view of an option: clock fields as HH:MM, ids unchanged."""
+    row = option.model_dump(mode="json")
+    for key in _TIME_FIELDS:
+        if row.get(key) is not None:
+            row[key] = fmt_hhmm(row[key])
+    return row
+
+
+def normalise_usage(usage: dict[str, Any] | None, model: str | None = None) -> dict[str, Any]:
+    usage = dict(usage or {})
+    cached = bool(usage.get("cached", False))
+    return {
+        "model": str(usage.get("model") or model or "unknown"),
+        "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+        "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+        "ms": 0.0 if cached else round(float(usage.get("ms", 0.0) or 0.0), 1),
+        "cached": cached,
+        "repaired": bool(usage.get("repaired", False)),
+    }
 
 
 class LLMAgent(BaseAgent):
@@ -108,7 +200,10 @@ class LLMAgent(BaseAgent):
         self.impl = f"llm:{getattr(client, 'model', 'unknown')}"
         self.usages: list[dict[str, Any]] = []
         self.last_usage: dict[str, Any] | None = None
+        self.call_usage: dict[str, dict[str, Any]] = {}
+        self.injection_findings: list[dict[str, Any]] = []
         self._retrieved_chunks: list[Any] = []
+        self._unsafe_ids: set[str] = set()
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -120,9 +215,14 @@ class LLMAgent(BaseAgent):
         return [c for c in checks if c.hard and not c.passed]
 
     def _record(self, usage: dict[str, Any], label: str) -> None:
-        recorded = {**usage, "label": label}
-        self.usages.append(recorded)
-        self.last_usage = usage
+        clean = normalise_usage(usage, getattr(self.client, "model", None))
+        self.usages.append({**clean, "label": label})
+        self.call_usage[label] = clean
+        self.last_usage = clean
+
+    def usage_for(self, label: str) -> dict[str, Any] | None:
+        """Usage of this agent's most recent LLM call with ``label`` (perceive/turn1/turn2)."""
+        return self.call_usage.get(label)
 
     def _reports(self) -> list[tuple[str, str]]:
         """ONLY unstructured text.  Never truth_* fields or private numbers."""
@@ -241,6 +341,7 @@ class LLMAgent(BaseAgent):
             return self._facts
 
         reports = self._reports()
+        self.injection_findings = detect_injection(reports)
         if not reports:
             # No unstructured input for this role: reuse deterministic perception.
             self._facts = stub_perceive(self.role, public, self._private)
@@ -375,7 +476,7 @@ class LLMAgent(BaseAgent):
             Objection(
                 option_id=obj.option_id,
                 category=obj.category,
-                reason=_truncate_words(obj.reason, 40),
+                reason=trim_rationale(obj.reason, 240),
             )
             for obj in decision.objections
             if obj.option_id in known_ids and obj.category in _OBJECTION_CATEGORIES
@@ -384,9 +485,24 @@ class LLMAgent(BaseAgent):
         counter, counter_note = self._counter(
             public, decision.counter, {o.option_id: o for o in options}
         )
-        rationale = _truncate_words(decision.rationale, 60)
+        rationale = trim_rationale(decision.rationale) or (
+            f"{self.role.value} ranks {ranking[0]} first." if ranking else f"{self.role.value} vetoed every option."
+        )
         if counter_note:
-            rationale = _truncate_words(f"{rationale} {counter_note}", 70)
+            rationale = f"{rationale} [{counter_note}]"
+
+        self._unsafe_ids = {v.option_id for v in vetoes}
+        if self.red_team:
+            # Simulated compromised agent (on top of the text injection): withhold
+            # code vetoes and push an unsafe option first.  The orchestrator must
+            # catch this from code truth, never from the agent's word.
+            ranking = red_team_ranking(ranking, self._unsafe_ids)
+            vetoes = []
+            counter = None
+            rationale = (
+                f"{rationale} [COMPROMISED AGENT: vetoes withheld; "
+                f"{ranking[0] if ranking else 'nothing'} pushed to #1]"
+            )
 
         return ProposalMessage(
             run_id=public.run_id,
@@ -414,18 +530,24 @@ class LLMAgent(BaseAgent):
     ) -> tuple[Turn1Decision, dict[str, Any]]:
         table = []
         for option in feasible:
-            row = option.model_dump(mode="json")
-            row["utility"] = round(utility.get(option.option_id, 0.0), 4)
+            row = option_row(option)
+            row["utility"] = _round2(utility.get(option.option_id, 0.0))
             row["objectives"] = {
-                key: round(value, 4) for key, value in objectives.get(option.option_id, {}).items()
+                key: _round2(value) for key, value in objectives.get(option.option_id, {}).items()
             }
-            row["cost_eur_total"] = round(costs.get(option.option_id, 0.0), 1)
+            row["cost_eur_total"] = int(round(costs.get(option.option_id, 0.0)))
             table.append(row)
         payload = {
             "decision": "TURN1",
+            "task": (
+                "Turn 1: rank every feasible option best-first, object to poor options, "
+                "optionally propose one counter-option."
+            ),
             "run_id": public.run_id,
             "mode": public.mode.value,
-            "expected_eta": public.expected_eta,
+            "time_format": "clock times are HH:MM local; '+1' means next day",
+            "original_eta": fmt_hhmm(public.original_eta),
+            "expected_eta": fmt_hhmm(public.expected_eta),
             "destination": public.flight.destination,
             "feasible_option_ids": [o.option_id for o in feasible],
             "vetoed_option_ids": sorted(v.option_id for v in vetoes),
@@ -448,7 +570,7 @@ class LLMAgent(BaseAgent):
             {
                 "key": fact.key,
                 "value": fact.value,
-                "confidence": fact.confidence,
+                "confidence": _round2(fact.confidence),
                 "source": fact.source,
                 "citation": fact.citation.chunk_id if fact.citation else None,
             }
@@ -488,6 +610,13 @@ class LLMAgent(BaseAgent):
             return None, f"dropped counter: non-controllable fields {bad}"
         if not changes:
             return None, "dropped counter: no changes"
+        for key in _TIME_FIELDS:
+            if key in changes and changes[key] is not None:
+                reference = getattr(base, key) if getattr(base, key) is not None else base.arrival_slot
+                try:
+                    changes[key] = parse_hhmm(changes[key], reference)
+                except (TypeError, ValueError):
+                    return None, "dropped counter: invalid time value"
         data = base.model_dump()
         data.update(changes)
         data.update(
@@ -563,7 +692,7 @@ class LLMAgent(BaseAgent):
             category = self._reason_category(raw, public, option, objectives[oid])
             votes.append(Vote(option_id=oid, vote="DISAPPROVE", reason=category))
             if raw and raw.upper() not in {category, "OTHER"}:
-                free_text.append(f"{oid}: {raw}")
+                free_text.append(f"{oid}: {trim_rationale(raw, 200)}")
 
         approved = {v.option_id for v in votes if v.vote == "APPROVE"}
         ranking = [oid for oid in decision.ranking if oid in approved]
@@ -571,16 +700,28 @@ class LLMAgent(BaseAgent):
             if oid not in ranking:
                 ranking.append(oid)
 
-        rationale = decision.rationale or f"{self.role.value} approves {ranking or 'nothing'}"
+        summary = f"[approves: {', '.join(ranking) if ranking else 'none'}]"
+        llm_text = trim_rationale(decision.rationale)
+        rationale = f"{llm_text} {summary}" if llm_text else f"{self.role.value} {summary}"
         if free_text:
             rationale = f"{rationale} | free-text reasons: " + "; ".join(free_text)
+
+        if self.red_team:
+            compromised = red_team_votes([o.option_id for o in shortlist], self._unsafe_ids)
+            if compromised is not None:
+                votes, ranking, target = compromised
+                rationale = (
+                    f"{rationale.replace('[approves:', '[LLM approved:', 1)} "
+                    f"[COMPROMISED AGENT: ballot replaced; approve {target} regardless of checks]"
+                )
+
         return BallotMessage(
             run_id=public.run_id,
             sender=self.role,
             votes=votes,
             ranking=ranking,
             citations=self._union_citations(facts, decision.citations),
-            rationale=_truncate_words(rationale, 90),
+            rationale=rationale,
         )
 
     def _decide_turn2(
@@ -599,21 +740,19 @@ class LLMAgent(BaseAgent):
         table = []
         for option in shortlist:
             oid = option.option_id
-            row = option.model_dump(mode="json")
-            row["utility"] = round(utility.get(oid, 0.0), 4)
+            row = option_row(option)
+            row["utility"] = _round2(utility.get(oid, 0.0))
             row["objectives"] = {
-                key: round(value, 4) for key, value in objectives.get(oid, {}).items()
+                key: _round2(value) for key, value in objectives.get(oid, {}).items()
             }
-            row["cost_eur_total"] = round(costs.get(oid, 0.0), 1)
+            row["cost_eur_total"] = int(round(costs.get(oid, 0.0)))
             row["own_hard_checks_pass"] = not self._failing(checks[oid])
             if fallback_utility is not None:
-                row["utility_delta_vs_fallback"] = round(
-                    utility.get(oid, 0.0) - fallback_utility, 4
-                )
+                row["utility_delta_vs_fallback"] = _round2(utility.get(oid, 0.0) - fallback_utility)
             table.append(row)
         if fallback_option is not None:
             fallback_id = fallback_option.option_id
-            fallback_value = round(float(fallback_utility or 0.0), 4)
+            fallback_value = _round2(fallback_utility)
             rule = (
                 f"If no option is approved by all three agents, the deterministic fallback "
                 f"will commit {fallback_id} (your utility for it: {fallback_value:.2f}). "
@@ -623,6 +762,7 @@ class LLMAgent(BaseAgent):
             )
             projection = {
                 "option_id": fallback_id,
+                "arrival_slot": fmt_hhmm(fallback_option.arrival_slot),
                 "your_utility": fallback_value,
                 "rule": rule,
             }
@@ -630,8 +770,14 @@ class LLMAgent(BaseAgent):
             projection = {"option_id": None, "your_utility": None, "rule": "No fallback projection."}
         payload = {
             "decision": "TURN2",
+            "task": (
+                "Turn 2: APPROVE or DISAPPROVE every shortlisted option (with a reason for "
+                "DISAPPROVE) and rank the ones you approve. No new options."
+            ),
             "run_id": public.run_id,
             "mode": public.mode.value,
+            "time_format": "clock times are HH:MM local; '+1' means next day",
+            "expected_eta": fmt_hhmm(public.expected_eta),
             "shortlist": table,
             "fallback_projection": projection,
             "other_agents": [summary.model_dump(mode="json") for summary in summaries],
@@ -697,4 +843,14 @@ class LLMAgent(BaseAgent):
         return max(weighted, key=lambda key: (weighted[key], key))
 
 
-__all__ = ["LLMAgent", "load_prompt", "prompt_hashes", "RED_TEAM_NOTE"]
+__all__ = [
+    "LLMAgent",
+    "load_prompt",
+    "prompt_hashes",
+    "RED_TEAM_NOTE",
+    "detect_injection",
+    "normalise_usage",
+    "option_row",
+    "parse_hhmm",
+    "trim_rationale",
+]

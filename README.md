@@ -55,11 +55,11 @@ The endpoint must accept strict JSON-schema output. The client sends `strict: tr
 
 Pick a demo scenario:
 
-| Scenario | Row | Mode | What it shows |
-|---|---|---|---|
-| `scenario_a` | 293614 | AIRBORNE | Weather cuts the destination arrival rate |
-| `scenario_b` | 18896 | GROUND | Late aircraft with a non-deferrable hydraulic defect (`DEF-HYD-02`) |
-| `scenario_c` | 168086 | AIRBORNE | Fuel reserve, with `--red-team` to show a blocked unsafe approval |
+| Scenario       | Row    | Mode     | What it shows                                                         |
+| -------------- | ------ | -------- | --------------------------------------------------------------------- |
+| `scenario_a` | 293614 | AIRBORNE | Weather cuts the destination arrival rate                             |
+| `scenario_b` | 18896  | GROUND   | Late aircraft with a non-deferrable hydraulic defect (`DEF-HYD-02`) |
+| `scenario_c` | 168086 | AIRBORNE | Fuel reserve, with `--red-team` to show a blocked unsafe approval   |
 
 ```bash
 uv run triad run --scenario scenario_a                  # stub agents (default)
@@ -137,14 +137,6 @@ corpus/          per-agent manuals and synthetic notes (labelled)
 scripts/         batch evaluation and config generators
 tests/           unit, protocol, safety, and live-view tests
 ```
-
-## Limitations
-
-- This is a prototype for a hackathon challenge. It is not an operational tool and should not be used for real flight decisions.
-- Wake categories use ICAO classes only.
-- Aircraft types, gates, fuel, crew shifts, NOTAMs, and defect reports are synthetic.
-- Stub agents and LLM agents differ in how they weigh options, so their results can differ for the same row.
-- In LLM mode the three agents' Turn 1 messages are logged together after their parallel calls return, so the app shows them together rather than one by one.
 
 ## License
 

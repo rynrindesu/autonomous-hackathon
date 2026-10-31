@@ -1,0 +1,5 @@
+role: GROUND
+prompt_version: ground@v0
+weights: {OVERTIME: 0.35, GATE_CHANGE: 0.2, NEXT_LEG: 0.35, DELAY: 0.1}
+accept_tolerance: 0.25
+objection_threshold: 0.7

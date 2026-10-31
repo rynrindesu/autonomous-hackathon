@@ -1,0 +1,5 @@
+role: PILOT
+prompt_version: pilot@v0
+weights: {FUEL: 0.35, DELAY: 0.2, PAX_CONNECTIONS: 0.3, TURBULENCE: 0.15}
+accept_tolerance: 0.25
+objection_threshold: 0.7

@@ -1,0 +1,135 @@
+# Labelled perception set for later LLM evaluation (>=24 items).
+# Inputs deliberately mirror the text formats produced by src/triad/data/enrich.py:
+#   NOTAM: "!DEN 01/123 DEN TWY K AND L CLSD 1501021200-1501021700"
+#   PIREP: "PIREP UA340 MOD TURB FL340-FL360"
+#   Defect: the crew-chief sentence plus fault-code style wording from config/defects.yaml
+#
+# Expected values are the ground truth the perception layer should extract.
+# `closed_taxiways: []` means the text contains no taxiway closure.
+version: 1
+
+atc_notams:
+  - id: ATC-NOTAM-01
+    input: "!DEN 01/123 DEN TWY K AND L CLSD 1501021200-1501021700"
+    expected:
+      closed_taxiways: [K, L]
+  - id: ATC-NOTAM-02
+    input: "!DEN 01/456 DEN TWY K/L BTN TWY A AND TWY K CLSD"
+    expected:
+      closed_taxiways: [K, L]
+  - id: ATC-NOTAM-03
+    input: "!ATL 02/210 ATL RWY 27L CLSD 1502030600-1502031400"
+    expected:
+      closed_taxiways: []
+  - id: ATC-NOTAM-04
+    input: "!ORD 03/088 ORD TWY A AND M CLSD 1503101500-1503101900"
+    expected:
+      closed_taxiways: [A, M]
+  - id: ATC-NOTAM-05
+    input: "!DFW 04/301 DFW TWY B CLSD BTN B4 AND B7"
+    expected:
+      closed_taxiways: [B]
+  - id: ATC-NOTAM-06
+    input: "!JFK 05/177 JFK TWY K AND A CLSD 1505010900-1505011300"
+    expected:
+      closed_taxiways: [K, A]
+  - id: ATC-NOTAM-07
+    input: "!LAX 06/044 LAX APRON CONSTRUCTION WI TWY D AVOID LGTD BARRICADES"
+    expected:
+      closed_taxiways: []
+  - id: ATC-NOTAM-08
+    input: "!SEA 07/512 SEA TWY C CLSD 1507120000-1507120600"
+    expected:
+      closed_taxiways: [C]
+
+pireps:
+  - id: PILOT-PIREP-01
+    input: "PIREP UA340 MOD TURB FL340-FL360"
+    expected:
+      FL340: MODERATE
+  - id: PILOT-PIREP-02
+    input: "PIREP UA360 SEV TURB FL360-FL380"
+    expected:
+      FL360: SEVERE
+  - id: PILOT-PIREP-03
+    input: "PIREP UA320 LGT TURB FL320-FL340"
+    expected:
+      FL320: LIGHT
+  - id: PILOT-PIREP-04
+    input: "PIREP SKYWAY NO TURB REPORTED FL340"
+    expected:
+      FL340: NONE
+  - id: PILOT-PIREP-05
+    input: "PIREP UA350 SEV TURB FL350"
+    expected:
+      FL350: SEVERE
+  - id: PILOT-PIREP-06
+    input: "PIREP UA380 MOD TURB FL380-FL400"
+    expected:
+      FL380: MODERATE
+  - id: PILOT-PIREP-07
+    input: "PIREP UA330 LGT CHOP FL330"
+    expected:
+      FL330: LIGHT
+  - id: PILOT-PIREP-08
+    input: "MOD TURB FL340"
+    expected:
+      FL340: MODERATE
+
+defects:
+  - id: GROUND-DEFECT-01
+    input: "Crew chief: HYD LO PRESS light on the left system, fluid seeping in the left main gear bay."
+    defect_id: DEF-HYD-02
+    expected:
+      ata_chapter: 29
+      deferrable: false
+      repair_min: 45
+  - id: GROUND-DEFECT-02
+    input: "Wear pin flush on number three brake, found on walkaround."
+    defect_id: DEF-BRK-01
+    expected:
+      ata_chapter: 32
+      deferrable: false
+      repair_min: 60
+  - id: GROUND-DEFECT-03
+    input: "Pack two tripped off during taxi-in, cabin running warm, reset did not hold."
+    defect_id: DEF-PACK-01
+    expected:
+      ata_chapter: 21
+      deferrable: true
+      repair_min: 15
+  - id: GROUND-DEFECT-04
+    input: "APU will not start, no fault light, need ground power and air at the gate."
+    defect_id: DEF-APU-01
+    expected:
+      ata_chapter: 49
+      deferrable: true
+      repair_min: 10
+  - id: GROUND-DEFECT-05
+    input: "Number one ILS receiver flagged inop on the taxi-in check."
+    defect_id: DEF-NAV-01
+    expected:
+      ata_chapter: 34
+      deferrable: true
+      repair_min: 10
+  - id: GROUND-DEFECT-06
+    input: "IDG one disconnect light came on after landing, generator offline."
+    defect_id: DEF-ELEC-01
+    expected:
+      ata_chapter: 24
+      deferrable: true
+      repair_min: 20
+  - id: GROUND-DEFECT-07
+    input: "Left hydraulic system low pressure with fluid in the left main wheel well."
+    defect_id: DEF-HYD-02
+    expected:
+      ata_chapter: 29
+      deferrable: false
+      repair_min: 45
+  - id: GROUND-DEFECT-08
+    input: "Right air conditioning pack tripped offline during taxi, cabin warming, reset unsuccessful."
+    defect_id: DEF-PACK-01
+    expected:
+      ata_chapter: 21
+      deferrable: true
+      repair_min: 15

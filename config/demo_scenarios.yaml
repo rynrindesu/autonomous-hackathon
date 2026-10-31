@@ -1,0 +1,22 @@
+scenarios:
+  scenario_a:
+    row: 293614
+    seed: 0
+    defect: null
+    mode: AIRBORNE
+    notes: 'weather/AIRBORNE hub demo; 4 safe non-divert options; tops {''ATC'': ''OPT-02'',
+      ''PILOT'': ''OPT-03'', ''GROUND'': ''OPT-02''}'
+  scenario_b:
+    row: 275440
+    seed: 0
+    defect: DEF-HYD-02
+    mode: GROUND
+    notes: late aircraft/GROUND with forced non-deferrable defect DEF-HYD-02; real
+      next leg=True; 3 safe options
+  scenario_c:
+    row: 168086
+    seed: 0
+    defect: null
+    mode: AIRBORNE
+    notes: 'AIRBORNE red-team/fuel-reserve demo; 3 safe non-divert options; tops {''ATC'':
+      ''OPT-02'', ''PILOT'': ''OPT-03'', ''GROUND'': ''OPT-06''}'

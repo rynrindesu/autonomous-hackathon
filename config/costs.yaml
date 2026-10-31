@@ -1,0 +1,14 @@
+# Cost weights used by agents' disclosed costs (EUR) and by the fallback solver.
+# Sources: EUROCONTROL Standard Inputs for Economic Analyses Ed. 10 (2024); ICAO ICEC (CO2 factor 3.16).
+currency: EUR
+fuel_eur_per_kg: 0.75
+co2_kg_per_kg_fuel: 3.16
+arrival_delay_eur_per_min: 100        # EUROCONTROL network-average ATFM delay cost per minute (per flight)
+missed_connection_eur_per_pax: 300    # synthetic: rebooking + care
+holding_stack_eur_per_min: 20         # synthetic proxy for ATC workload / sector capacity loss
+runway_change_eur: 150                # synthetic
+gate_change_eur: 400                  # synthetic
+next_leg_delay_eur_per_min: 100       # same basis as arrival delay
+swap_aircraft_eur: 5000               # synthetic
+divert_eur: 25000                     # synthetic: diversion + recovery
+turbulence_moderate_eur: 500          # synthetic: crew/pax injury risk proxy

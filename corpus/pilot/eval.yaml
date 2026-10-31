@@ -1,0 +1,41 @@
+# Retrieval evaluation for the Pilot agent. Queries mirror what the agent sees
+# in a disruption (regulation questions, PIREPs, fuel and connection policy).
+queries:
+  - query: "121.639 domestic fuel alternate and 45 minutes at normal cruise"
+    expect: pilot-cfr121-639-01
+  - query: "91.167 IFR fuel 45 minutes reserve airplanes"
+    expect: pilot-cfr91-167-01
+  - query: "helicopter IFR fuel 30 minutes reserve"
+    expect: pilot-cfr91-167-01
+  - query: "121.645 flag supplemental 30 minutes holding at 1500 feet"
+    expect: pilot-cfr121-645-01
+  - query: "do not confuse 121.639 with the flag 121.645 reserve"
+    expect: pilot-cfr121-645-02
+  - query: "Part 117 Table B flight duty period 14 hours start 0700"
+    expect: pilot-part117-02
+  - query: "cumulative flight time 100 hours in 672 consecutive hours"
+    expect: pilot-part117-03
+  - query: "rest period 10 hours before flight duty period"
+    expect: pilot-part117-04
+  - query: "severe turbulence definition aircraft momentarily out of control"
+    expect: pilot-aim-turbulence-02
+  - query: "moderate chop occupants definite strain against seat belts"
+    expect: pilot-aim-turbulence-02
+  - query: "clear air turbulence CAT above 15000 feet"
+    expect: pilot-aim-turbulence-03
+  - query: "MOD TURB FL340"
+    expect: pilot-pirep-format-03
+  - query: "PIREP TB FL MOD decode turbulence group"
+    expect: pilot-pirep-format-03
+  - query: "urgent PIREP UUA severe turbulence"
+    expect: pilot-pirep-format-01
+  - query: "contingency fuel 5 percent of trip fuel"
+    expect: pilot-fuel-policy-synthetic-01
+  - query: "minimum fuel declare emergency threshold final reserve"
+    expect: pilot-fuel-policy-synthetic-03
+  - query: "discretionary holding fuel 10 to 40 minutes"
+    expect: pilot-fuel-policy-synthetic-01
+  - query: "minimum connection time ATL 35 minutes"
+    expect: pilot-connections-synthetic-01
+  - query: "protect unaccompanied minors and most connecting passengers first"
+    expect: pilot-connections-synthetic-02

@@ -1,0 +1,43 @@
+# Retrieval evaluation for the Ground agent. Queries include the exact crew-chief
+# defect texts and the MEL/ATA/ramp policy questions the agent must answer.
+queries:
+  - query: "Crew chief: HYD LO PRESS light on the left system, fluid seeping in the left main gear bay."
+    expect: ground-airline-mel-excerpt-02
+  - query: "Wear pin flush on number three brake, found on walkaround."
+    expect: ground-airline-mel-excerpt-03
+  - query: "Pack two tripped off during taxi-in, cabin running warm, reset did not hold."
+    expect: ground-airline-mel-excerpt-04
+  - query: "APU will not start, no fault light, need ground power and air at the gate."
+    expect: ground-airline-mel-excerpt-05
+  - query: "Number one ILS receiver flagged inop on the taxi-in check."
+    expect: ground-airline-mel-excerpt-06
+  - query: "IDG one disconnect light came on after landing, generator offline."
+    expect: ground-airline-mel-excerpt-07
+  - query: "MEL category B 3 consecutive calendar days"
+    expect: ground-mmel-pl25-02
+  - query: "Category C 10 consecutive calendar days excluding day of discovery"
+    expect: ground-mmel-pl25-02
+  - query: "Category D 120 consecutive calendar days"
+    expect: ground-mmel-pl25-02
+  - query: "what does (M) mean maintenance procedure before dispatch"
+    expect: ground-mmel-pl25-03
+  - query: "MEL versus MMEL operator approved document"
+    expect: ground-mmel-pl25-01
+  - query: "ATA 29 hydraulic power chapter"
+    expect: ground-ata-chapters-01
+  - query: "ATA 32 landing gear chapter"
+    expect: ground-ata-chapters-01
+  - query: "minimum turnaround narrowbody 40 minutes"
+    expect: ground-ramp-turnaround-01
+  - query: "widebody turnaround 75 minutes"
+    expect: ground-ramp-turnaround-01
+  - query: "ramp crew hard limit shift end plus 120 minutes"
+    expect: ground-ramp-crew-shift-01
+  - query: "overtime EUR 6 per minute for the turnaround team"
+    expect: ground-ramp-crew-shift-01
+  - query: "APU category C MEL item 49"
+    expect: "B737 MMEL"
+  - query: "IDG generator disconnect MEL relief"
+    expect: "Synthetic airline MEL excerpt"
+  - query: "brake wear pin flush no MEL relief"
+    expect: ground-airline-mel-excerpt-03

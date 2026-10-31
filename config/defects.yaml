@@ -1,0 +1,51 @@
+# SYNTHETIC defect library (labelled). MEL item numbers are illustrative, modelled on ATA chapters and
+# MMEL repair categories (FAA PL-25: B=3 days, C=10 days, D=120 days, A=per remarks). Not operational data.
+defects:
+  DEF-HYD-02:
+    text: "Crew chief: HYD LO PRESS light on the left system, fluid seeping in the left main gear bay."
+    fault_code: "HYD SYS A LO PRESS"
+    ata_chapter: 29
+    mel_item: "29-11-01 (illustrative)"
+    mel_category: null
+    deferrable: false
+    repair_min: 45
+  DEF-BRK-01:
+    text: "Wear pin flush on number three brake, found on walkaround."
+    fault_code: "BRAKE WEAR #3"
+    ata_chapter: 32
+    mel_item: "32-42-01 (illustrative)"
+    mel_category: null
+    deferrable: false
+    repair_min: 60
+  DEF-PACK-01:
+    text: "Pack two tripped off during taxi-in, cabin running warm, reset did not hold."
+    fault_code: "PACK 2 TRIP"
+    ata_chapter: 21
+    mel_item: "21-51-01 (illustrative)"
+    mel_category: C
+    deferrable: true
+    repair_min: 15
+  DEF-APU-01:
+    text: "APU will not start, no fault light, need ground power and air at the gate."
+    fault_code: "APU START FAIL"
+    ata_chapter: 49
+    mel_item: "49-11-01 (illustrative)"
+    mel_category: C
+    deferrable: true
+    repair_min: 10
+  DEF-NAV-01:
+    text: "Number one ILS receiver flagged inop on the taxi-in check."
+    fault_code: "ILS 1 FAIL"
+    ata_chapter: 34
+    mel_item: "34-31-01 (illustrative)"
+    mel_category: C
+    deferrable: true
+    repair_min: 10
+  DEF-ELEC-01:
+    text: "IDG one disconnect light came on after landing, generator offline."
+    fault_code: "IDG 1 DISC"
+    ata_chapter: 24
+    mel_item: "24-21-01 (illustrative)"
+    mel_category: C
+    deferrable: true
+    repair_min: 20

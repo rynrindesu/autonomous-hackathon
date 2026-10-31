@@ -1,0 +1,6 @@
+role: ATC
+prompt_version: atc@v0
+# Soft-objective weights (objective keys are ObjectionCategory values). Objectives are normalised to [0,1], 0 = best.
+weights: {THROUGHPUT: 0.5, HOLDING_STACK: 0.35, OTHER: 0.15}
+accept_tolerance: 0.25        # Turn 2: APPROVE if utility >= best_utility - tolerance (and all own checks pass)
+objection_threshold: 0.7      # Turn 1: object to an option if any weighted objective >= threshold

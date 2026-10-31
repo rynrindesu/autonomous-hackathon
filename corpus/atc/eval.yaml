@@ -1,0 +1,39 @@
+# Retrieval evaluation for the ATC agent. Each query is written the way the
+# agent would ask it; `expect` is a chunk_id (or a doc substring).
+queries:
+  - query: "medium behind heavy separation minimum"
+    expect: atc-wake-separation-02
+  - query: "A380 super leading a light aircraft 8 NM"
+    expect: atc-wake-separation-02
+  - query: "heavy leading light 6 NM wake turbulence"
+    expect: atc-wake-separation-02
+  - query: "what are the ICAO wake categories J H M L"
+    expect: atc-wake-separation-01
+  - query: "convert wake separation distance to time for an arrival slot"
+    expect: atc-wake-separation-03
+  - query: "airport acceptance rate arrivals per hour definition"
+    expect: atc-arrival-rate-gdp-01
+  - query: "weather cuts arrival rate from 60 to 36 per hour"
+    expect: atc-arrival-rate-gdp-02
+  - query: "ground delay program EDCT moves delay to the origin"
+    expect: atc-arrival-rate-gdp-03
+  - query: "linear holding versus stack holding"
+    expect: atc-holding-delay-absorption-01
+  - query: "expect further clearance EFC holding pattern"
+    expect: atc-holding-delay-absorption-01
+  - query: "speed control 250 knots and 170 knots on approach"
+    expect: atc-holding-delay-absorption-02
+  - query: "TWY K CLSD BTN K3 AND K5"
+    expect: atc-notam-decoding-01
+  - query: "decode NOTAM time group 1501021200"
+    expect: atc-notam-decoding-02
+  - query: "QMXLC taxiway closed Q-code meaning"
+    expect: atc-notam-decoding-03
+  - query: "U/S AVBL CLSD NOTAM contractions"
+    expect: atc-notam-decoding-01
+  - query: "closed taxiway makes a gate route unreachable"
+    expect: atc-airport-operations-notes-01
+  - query: "available taxiways A B C D E F K L M gate route"
+    expect: atc-airport-operations-notes-01
+  - query: "expired NOTAM closure is not effective for this arrival"
+    expect: atc-notam-decoding-02

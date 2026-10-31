@@ -1,0 +1,22 @@
+# Runway idents per airport (current FAA airport diagrams; some 2015 layouts differ, e.g. ORD).
+# Airports not listed fall back to `default` (labelled synthetic).
+default: ["09/27", "18/36"]
+airports:
+  ATL: ["8L/26R", "8R/26L", "9L/27R", "9R/27L", "10/28"]
+  ORD: ["4L/22R", "4R/22L", "9L/27R", "9R/27L", "9C/27C", "10L/28R", "10C/28C", "10R/28L"]
+  DFW: ["13L/31R", "13R/31L", "17C/35C", "17L/35R", "17R/35L", "18L/36R", "18R/36L"]
+  DEN: ["7/25", "8/26", "16L/34R", "16R/34L", "17L/35R", "17R/35L"]
+  LAX: ["6L/24R", "6R/24L", "7L/25R", "7R/25L"]
+  SFO: ["1L/19R", "1R/19L", "10L/28R", "10R/28L"]
+  LAS: ["1L/19R", "1R/19L", "8L/26R", "8R/26L"]
+  IAH: ["8L/26R", "8R/26L", "9/27", "15L/33R", "15R/33L"]
+  PHX: ["7L/25R", "7R/25L", "8/26"]
+  SEA: ["16L/34R", "16C/34C", "16R/34L"]
+  LGA: ["4/22", "13/31"]
+  JFK: ["4L/22R", "4R/22L", "13L/31R", "13R/31L"]
+  BOS: ["4L/22R", "4R/22L", "9/27", "14/32", "15L/33R", "15R/33L"]
+  MSP: ["4/22", "12L/30R", "12R/30L", "17/35"]
+  CLT: ["5/23", "18L/36R", "18C/36C", "18R/36L"]
+  DTW: ["3L/21R", "3R/21L", "4L/22R", "4R/22L", "9L/27R", "9R/27L"]
+  EWR: ["4L/22R", "4R/22L", "11/29"]
+  MCO: ["17L/35R", "17R/35L", "18L/36R", "18R/36L"]

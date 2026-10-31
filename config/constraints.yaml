@@ -1,0 +1,29 @@
+# Hard-constraint parameters + citation text. Code reads numbers from here; RAG explains them.
+
+wake_min_nm:                  # leader -> follower, ICAO Doc 4444 §8.7.4.4 (free copy: NATS AIC 044/2020)
+  J: {J: 4, H: 6, M: 7, L: 8}
+  H: {H: 4, M: 5, L: 6}
+  M: {L: 5}
+radar_min_nm: 3               # when no wake minimum applies
+
+fuel_reserve_min: 45          # 14 CFR 121.639 (domestic): alternate + 45 min at normal cruise
+turbulence_hard_level: SEVERE # AIM §7-1-21 Table 7-1-11 intensities
+gate_buffer_min: 10
+
+constraints:
+  SHR-RWY-01:  {owner: SHARED, text: "Runway exists at destination", source: "FAA airport diagram (config/runways.yaml)"}
+  SHR-GATE-00: {owner: SHARED, text: "Gate exists on the public airport map", source: "Synthetic airport map"}
+  SHR-TIME-01: {owner: SHARED, text: "Times are physically consistent (no arriving before possible; delay split adds up)", source: "Kinematics"}
+  ATC-WAKE-01: {owner: ATC, text: "Gap behind leader >= ICAO wake minimum for the pair", source: "ICAO Doc 4444 §8.7.4.4; NATS AIC 044/2020"}
+  ATC-RWY-01:  {owner: ATC, text: "Slot is free and within reduced arrival rate", source: "FAA AAR definition; JO 7210.3"}
+  ATC-TWY-01:  {owner: ATC, text: "Gate reachable with open taxiways", source: "NOTAM (perceived)"}
+  PLT-FUEL-01: {owner: PILOT, text: "Landing fuel >= fuel to alternate + 45 min reserve", source: "14 CFR 121.639; 91.167"}
+  PLT-FUEL-02: {owner: PILOT, text: "Holding within fuel-limited maximum", source: "Derived from PLT-FUEL-01"}
+  PLT-WX-01:   {owner: PILOT, text: "No cruise level with severe turbulence", source: "AIM §7-1-21 Table 7-1-11"}
+  PLT-FDP-01:  {owner: PILOT, text: "Crew duty time not exceeded", source: "14 CFR 117.13 Table B"}
+  GND-GATE-01: {owner: GROUND, text: "Gate fits aircraft size", source: "Synthetic airport ops manual"}
+  GND-GATE-02: {owner: GROUND, text: "No overlapping gate occupancy (with buffer)", source: "Synthetic airport ops manual"}
+  GND-GATE-03: {owner: GROUND, text: "Gate leased to the carrier or common-use", source: "Synthetic airport ops manual"}
+  GND-TURN-01: {owner: GROUND, text: "Arrival to next departure >= minimum turnaround (or next leg delayed/swapped)", source: "Synthetic airline ops manual"}
+  GND-CREW-01: {owner: GROUND, text: "Ramp crew within company/labour hard shift limit", source: "Synthetic company policy"}
+  GND-MEL-01:  {owner: GROUND, text: "Non-deferrable defect repaired before departure", source: "Boeing B737 MMEL Rev 63; FAA PL-25"}

@@ -129,6 +129,16 @@ code, pre, kbd, samp { font-family: var(--td-mono) !important; }
   border-color: rgba(255,255,255,.14) !important;
   color: #dfe8e4 !important;
 }
+[data-testid="stSidebar"] [data-testid="stNumberInput"] input {
+  color: #16202e !important;
+  -webkit-text-fill-color: #16202e !important;
+  caret-color: #16202e !important;
+}
+[data-testid="stSidebar"] [data-testid="stNumberInput"] button,
+[data-testid="stSidebar"] [data-testid="stNumberInput"] button svg {
+  color: #16202e !important;
+  fill: #16202e !important;
+}
 [data-testid="stSidebar"] [role="radiogroup"] label p,
 [data-testid="stSidebar"] [data-testid="stCheckbox"] label p { color: #d7e0dc !important; }
 [data-testid="stSidebar"] [data-baseweb="checkbox"] div,

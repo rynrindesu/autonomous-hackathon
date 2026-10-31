@@ -13,6 +13,7 @@ API keys are never logged or written to the cache.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -54,6 +55,82 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 Transport = Callable[[dict[str, Any]], tuple[str, dict[str, Any]]]
+
+_BOUND_KEYS = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
+_SUBSCHEMA_MAPS = ("properties", "$defs", "definitions")
+_SUBSCHEMA_LISTS = ("anyOf", "oneOf", "allOf", "prefixItems")
+
+
+def _fmt_bound(value: Any) -> str:
+    return f"{value:g}" if isinstance(value, (int, float)) and not isinstance(value, bool) else str(value)
+
+
+def _bounds_text(bounds: dict[str, Any]) -> str:
+    parts = []
+    for key, label in (
+        ("minimum", ">="),
+        ("exclusiveMinimum", ">"),
+        ("maximum", "<="),
+        ("exclusiveMaximum", "<"),
+    ):
+        if key in bounds:
+            parts.append(f"{label} {_fmt_bound(bounds[key])}")
+    return "Range: " + ", ".join(parts) + "."
+
+
+def _bounds_already_described(description: str, bounds: dict[str, Any]) -> bool:
+    lo = bounds.get("minimum", bounds.get("exclusiveMinimum"))
+    hi = bounds.get("maximum", bounds.get("exclusiveMaximum"))
+    if lo is not None and hi is not None:
+        return f"{_fmt_bound(lo)}..{_fmt_bound(hi)}" in description
+    return False
+
+
+def _sanitize_node(node: Any) -> None:
+    if isinstance(node, list):
+        for item in node:
+            _sanitize_node(item)
+        return
+    if not isinstance(node, dict):
+        return
+
+    bounds = {key: node.pop(key) for key in _BOUND_KEYS if key in node}
+    if bounds:
+        description = str(node.get("description") or "")
+        if not _bounds_already_described(description, bounds):
+            text = _bounds_text(bounds)
+            node["description"] = f"{description} {text}".strip() if description else text
+
+    if node.get("type") == "object" or "properties" in node:
+        # Strict providers reject open objects and map schemas
+        # (``additionalProperties: {...}``); every object is closed.
+        node["additionalProperties"] = False
+
+    for key in _SUBSCHEMA_MAPS:
+        children = node.get(key)
+        if isinstance(children, dict):
+            for child in children.values():
+                _sanitize_node(child)
+    for key in _SUBSCHEMA_LISTS:
+        _sanitize_node(node.get(key))
+    if "items" in node:
+        _sanitize_node(node["items"])
+
+
+def strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep copy of ``schema`` that strict ``json_schema`` providers accept.
+
+    Anthropic's OpenAI-compatible endpoint (and other strict structured-output
+    backends) require ``strict: true``, ``additionalProperties: false`` on every
+    object, and reject numeric ``minimum``/``maximum`` keywords.  This only
+    rewrites the *transmitted* schema: Pydantic still enforces ``ge``/``le`` when
+    the response is parsed, and a removed bound is restated in ``description``.
+    Map-typed fields (``dict[str, X]``) cannot be expressed and are closed to
+    ``{}``; output models must use lists of objects instead.
+    """
+    copied = copy.deepcopy(schema)
+    _sanitize_node(copied)
+    return copied
 
 
 class LLMClient:
@@ -158,12 +235,17 @@ class LLMClient:
     def _request(
         self, system: str, user: str, json_schema_format: dict[str, Any]
     ) -> tuple[str, dict[str, Any], float]:
-        """Call the transport, falling back to plain json_object on schema rejection."""
+        """Call the transport, falling back to plain json_object on schema rejection.
+
+        Some providers (e.g. Anthropic's OpenAI-compatible endpoint) accept only
+        ``json_schema``; when the json_object fallback is rejected too, the
+        original schema error is re-raised so the real cause surfaces.
+        """
         attempts = [
             json_schema_format,
             {"type": "json_object"},
         ]
-        last_exc: Exception | None = None
+        first_exc: Exception | None = None
         for index, response_format in enumerate(attempts):
             kwargs = {
                 "model": self.model,
@@ -181,13 +263,15 @@ class LLMClient:
             try:
                 content, usage = self._invoke(kwargs)
             except Exception as exc:  # noqa: BLE001
-                last_exc = exc
                 if index == 0 and self._is_schema_rejection(exc):
+                    first_exc = exc
                     continue
+                if first_exc is not None:
+                    raise first_exc from exc
                 raise
             ms = (time.perf_counter() - started) * 1000.0
             return content, usage, ms
-        raise last_exc or LLMError("LLM request failed")
+        raise first_exc or LLMError("LLM request failed")
 
     def _invoke(self, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         if self._transport is not None:
@@ -224,15 +308,22 @@ class LLMClient:
             "type": "json_schema",
             "json_schema": {
                 "name": name,
-                "schema": out.model_json_schema(),
-                "strict": False,
+                "schema": strict_schema(out.model_json_schema()),
+                "strict": True,
             },
         }
 
     @staticmethod
     def _is_schema_rejection(exc: Exception) -> bool:
         text = f"{type(exc).__name__}: {exc}".lower()
-        markers = ("response_format", "json_schema", "json schema", "schema", "unsupported")
+        markers = (
+            "response_format",
+            "json_schema",
+            "json schema",
+            "schema",
+            "unsupported",
+            "not supported",
+        )
         return any(marker in text for marker in markers)
 
     # ------------------------------------------------------------------ cache
@@ -260,4 +351,4 @@ class LLMClient:
             pass
 
 
-__all__ = ["LLMClient", "LLMError", "Transport"]
+__all__ = ["LLMClient", "LLMError", "Transport", "strict_schema"]

@@ -73,9 +73,12 @@ def test_llm_error_after_two_bad_responses(tmp_path):
 
 
 def test_falls_back_to_json_object_when_schema_is_rejected(tmp_path):
+    """Providers without json_schema support still work via json_object."""
+
     def transport(kwargs):
         transport.calls += 1
         if kwargs["response_format"]["type"] == "json_schema":
+            assert kwargs["response_format"]["json_schema"]["strict"] is True
             raise ValueError("response_format json_schema is unsupported")
         return json.dumps({"answer": 3}), {"prompt_tokens": 1, "completion_tokens": 1}
 
@@ -86,3 +89,38 @@ def test_falls_back_to_json_object_when_schema_is_rejected(tmp_path):
 
     assert result.answer == 3
     assert transport.calls == 2  # type: ignore[attr-defined]
+
+
+def test_schema_error_surfaces_when_json_object_is_also_rejected(tmp_path):
+    """json_schema-only providers (Anthropic): report the schema error, not the fallback's."""
+    schema_error = ValueError(
+        "Error code: 400 - response_format.json_schema.strict: Input should be True"
+    )
+
+    def transport(kwargs):
+        transport.calls += 1
+        if kwargs["response_format"]["type"] == "json_schema":
+            raise schema_error
+        raise ValueError("response_format.type: Input should be 'json_schema'")
+
+    transport.calls = 0  # type: ignore[attr-defined]
+    client = LLMClient(model="m", api_key="k", cache_dir=tmp_path, transport=transport)
+
+    with pytest.raises(LLMError) as info:
+        client.complete_json("sys", "user", Answer, name="answer")
+
+    assert "strict: Input should be True" in str(info.value)
+    assert transport.calls == 2  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "response_format.json_schema.strict: Input should be True",
+        "For 'object' type, 'additionalProperties: true' is not supported",
+        "For 'number' type, properties maximum, minimum are not supported",
+        "additionalProperties: object is not supported",
+    ],
+)
+def test_strict_schema_errors_count_as_schema_rejection(message):
+    assert LLMClient._is_schema_rejection(ValueError(message)) is True

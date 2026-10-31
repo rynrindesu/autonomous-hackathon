@@ -7,9 +7,10 @@ by trusting the model's JSON shape.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from triad.schemas import ObjectionCategory
 
@@ -41,8 +42,25 @@ class AtcPerception(LLMModel):
     notes: str = ""
 
 
+class TurbulenceOut(LLMModel):
+    flight_level: str = Field(description='Flight level as "FL340".')
+    level: TurbulenceLevel
+
+
+def _pairs_from_mapping(value: Any, key_name: str, value_name: str) -> Any:
+    """Accept the legacy ``{key: value}`` object shape as well as the list shape."""
+    if isinstance(value, dict):
+        return [{key_name: key, value_name: item} for key, item in value.items()]
+    return value
+
+
 class PilotPerception(LLMModel):
-    turbulence: dict[str, TurbulenceLevel] = Field(default_factory=dict)
+    # A list of objects, not a map: strict json_schema providers reject
+    # ``dict[str, X]`` (``additionalProperties`` as a schema).
+    turbulence: list[TurbulenceOut] = Field(
+        default_factory=list,
+        description="One entry per flight level mentioned in the reports.",
+    )
     flagged_notes: list[str] = Field(default_factory=list)
     confidence: float = Field(
         ge=0.0,
@@ -57,6 +75,15 @@ class PilotPerception(LLMModel):
         )
     )
     notes: str = ""
+
+    @field_validator("turbulence", mode="before")
+    @classmethod
+    def _turbulence_from_mapping(cls, value: Any) -> Any:
+        return _pairs_from_mapping(value, "flight_level", "level")
+
+    def turbulence_map(self) -> dict[str, str]:
+        """Agent-facing view: ``{"FL340": "LIGHT", ...}`` (last entry wins)."""
+        return {entry.flight_level: entry.level for entry in self.turbulence}
 
 
 class GroundPerception(LLMModel):
@@ -96,9 +123,45 @@ class ObjectionOut(LLMModel):
     reason: str = Field(json_schema_extra=_REASON_LIMIT)
 
 
+class ChangeOut(LLMModel):
+    key: str = Field(description="Controllable option field to change, e.g. runway or arrival_slot.")
+    value: str = Field(
+        description='New value as text: clock times as HH:MM, minutes as digits, ids unchanged.'
+    )
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value_to_text(cls, value: Any) -> Any:
+        if value is None:
+            return "null"
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        if isinstance(value, (bool, int, float)):
+            return json.dumps(value)
+        return value
+
+
+_NULL_TEXT = {"", "null", "none"}
+
+
 class CounterOut(LLMModel):
     base_option_id: str
-    changes: dict[str, Any] = Field(default_factory=dict)
+    # A list of objects, not a map: strict json_schema providers reject
+    # ``dict[str, Any]``.  Values are text; agent code converts them to the
+    # option's field types (see ``LLMAgent._counter``).
+    changes: list[ChangeOut] = Field(default_factory=list)
+
+    @field_validator("changes", mode="before")
+    @classmethod
+    def _changes_from_mapping(cls, value: Any) -> Any:
+        return _pairs_from_mapping(value, "key", "value")
+
+    def changes_dict(self) -> dict[str, Any]:
+        """``{field: value}`` view (last entry wins); "null"/"" become ``None``."""
+        return {
+            change.key: (None if change.value.strip().lower() in _NULL_TEXT else change.value)
+            for change in self.changes
+        }
 
 
 RATIONALE_DESCRIPTION = (
@@ -166,7 +229,9 @@ __all__ = [
     "AtcPerception",
     "PilotPerception",
     "GroundPerception",
+    "TurbulenceOut",
     "ObjectionOut",
+    "ChangeOut",
     "CounterOut",
     "Turn1Decision",
     "VoteOut",

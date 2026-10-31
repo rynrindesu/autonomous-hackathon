@@ -100,35 +100,109 @@ code, pre, kbd, samp { font-family: var(--td-mono) !important; }
   text-transform: uppercase;
   font-weight: 500;
 }
+/* Sidebar fields: light paper field, black value text, dark icons. */
+[data-testid="stSidebar"] [data-testid="stSelectbox"] .react-aria-ComboBox > div,
 [data-testid="stSidebar"] [data-baseweb="select"] > div,
-[data-testid="stSidebar"] [data-testid="stSelectbox"] input,
-[data-testid="stSidebar"] [role="combobox"] {
-  background: rgba(255,255,255,.065) !important;
-  border-color: rgba(255,255,255,.18) !important;
-  color: #f4f1e8 !important;
-  border-radius: 2px;
-  min-height: 38px;
-}
-[data-testid="stSidebar"] [data-testid="stSelectbox"] .react-aria-ComboBox > div {
-  background: rgba(255,255,255,.065) !important;
-  border: 1px solid rgba(255,255,255,.18) !important;
+[data-testid="stSidebar"] [data-testid="stNumberInputContainer"],
+[data-testid="stSidebar"] [data-testid="stTextInputRootElement"],
+[data-testid="stSidebar"] [data-baseweb="input"] {
+  background: #f4f1e8 !important;
+  border: 1px solid #f4f1e8 !important;
   border-radius: 2px !important;
   min-height: 38px !important;
 }
-[data-testid="stSidebar"] [data-testid="stSelectbox"] button,
-[data-testid="stSidebar"] [data-testid="stSelectbox"] svg { background: transparent !important; color: #b9c9c4 !important; fill: #b9c9c4 !important; }
-[data-testid="stSidebar"] [data-testid="stSelectbox"] input::placeholder { color: #8fa7a2 !important; }
-[data-testid="stSidebar"] input {
-  background: rgba(255,255,255,.065) !important;
-  color: #f4f1e8 !important;
-  border-color: rgba(255,255,255,.18) !important;
-  border-radius: 2px;
+[data-testid="stSidebar"] [data-testid="stSelectbox"] .react-aria-ComboBox > div:focus-within,
+[data-testid="stSidebar"] [data-testid="stNumberInputContainer"]:focus-within,
+[data-testid="stSidebar"] [data-testid="stTextInputRootElement"]:focus-within {
+  border-color: #8fc7c0 !important;
+  box-shadow: 0 0 0 2px rgba(143,199,192,.28) !important;
+}
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea,
+[data-testid="stSidebar"] [role="combobox"],
+[data-testid="stSidebar"] [data-baseweb="select"] div,
+[data-testid="stSidebar"] [data-baseweb="input"] input {
+  background: transparent !important;
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+  caret-color: #000;
+  font-size: 13px !important;
+  opacity: 1 !important;
+}
+[data-testid="stSidebar"] input::placeholder,
+[data-testid="stSidebar"] textarea::placeholder {
+  color: #5d6b6d !important;
+  -webkit-text-fill-color: #5d6b6d !important;
+}
+[data-testid="stSidebar"] [data-testid="stSelectbox"] .react-aria-ComboBox button,
+[data-testid="stSidebar"] [data-testid="stSelectbox"] .react-aria-ComboBox svg,
+[data-testid="stSidebar"] [data-baseweb="select"] svg {
+  background: transparent !important;
+  color: #132527 !important;
+  fill: #132527 !important;
 }
 [data-testid="stSidebar"] [data-testid="stNumberInput"] button {
-  background: rgba(255,255,255,.07) !important;
-  border-color: rgba(255,255,255,.14) !important;
-  color: #dfe8e4 !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  color: #132527 !important;
 }
+[data-testid="stSidebar"] [data-testid="stNumberInput"] button:hover { background: #e4dfd2 !important; }
+[data-testid="stSidebar"] [data-testid="stNumberInput"] button svg { color: #132527 !important; fill: #132527 !important; }
+[data-testid="stSidebar"] [data-testid="stTooltipIcon"] button,
+[data-testid="stSidebar"] [data-testid="stTooltipIcon"] svg { color: #8fa7a2 !important; stroke: #8fa7a2 !important; }
+/* Disabled fields: same paper, dimmed but still legible. */
+[data-testid="stSidebar"] [data-testid="stSelectbox"] .react-aria-ComboBox > div[data-disabled],
+[data-testid="stSidebar"] [data-testid="stSelectbox"]:has(input:disabled) .react-aria-ComboBox > div { opacity: .55; }
+/* Dropdown menus are portalled to <body>: black option text. */
+[data-testid="stSelectboxVirtualDropdown"] [role="option"],
+[data-testid="stSelectboxVirtualDropdown"] [role="option"] *,
+ul[role="listbox"] li,
+ul[role="listbox"] li * {
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+}
+[data-testid="stSelectboxVirtualDropdown"] [role="option"] { font-size: 13px; }
+/* Long row labels: let the open menu grow past the narrow sidebar. */
+[data-testid="stSelectboxVirtualDropdown"] { min-width: min(430px, calc(100vw - 24px)) !important; }
+/* Sidebar segmented filter (All · Weather · Late aircraft). */
+[data-testid="stSidebar"] [data-testid="stButtonGroup"],
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(> [data-testid="stButtonGroup"]) { width: 100% !important; }
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] [role="radiogroup"] {
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100% !important;
+  max-width: none !important;
+  gap: 0;
+}
+[data-testid="stSidebar"] button[data-variant="segmented_control"] {
+  flex: 1 1 auto;
+  min-height: 30px;
+  padding: 0 6px;
+  background: transparent !important;
+  border: 1px solid rgba(255,255,255,.2) !important;
+  border-radius: 0 !important;
+  margin-left: -1px;
+}
+[data-testid="stSidebar"] button[data-variant="segmented_control"]:first-child { border-radius: 2px 0 0 2px !important; margin-left: 0; }
+[data-testid="stSidebar"] button[data-variant="segmented_control"]:last-child { border-radius: 0 2px 2px 0 !important; }
+[data-testid="stSidebar"] button[data-variant="segmented_control"] p {
+  color: #b9c9c4 !important;
+  font-family: var(--td-mono) !important;
+  font-size: 9.5px !important;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+[data-testid="stSidebar"] button[data-variant="segmented_control"]:hover { background: rgba(255,255,255,.07) !important; }
+[data-testid="stSidebar"] button[data-variant="segmented_control"][aria-checked="true"] {
+  background: #f4f1e8 !important;
+  border-color: #f4f1e8 !important;
+  position: relative;
+  z-index: 1;
+}
+[data-testid="stSidebar"] button[data-variant="segmented_control"][aria-checked="true"] p { color: #000 !important; font-weight: 600; }
 [data-testid="stSidebar"] [role="radiogroup"] label p,
 [data-testid="stSidebar"] [data-testid="stCheckbox"] label p { color: #d7e0dc !important; }
 [data-testid="stSidebar"] [data-baseweb="checkbox"] div,

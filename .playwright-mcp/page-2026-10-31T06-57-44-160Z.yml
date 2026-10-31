@@ -1,0 +1,574 @@
+- generic [ref=e2]:
+  - link "Skip to main content" [ref=e3] [cursor=pointer]:
+    - /url: "#stMain"
+  - region "Sidebar" [ref=e7]:
+    - generic [ref=e12]:
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]: TRIAD
+          - generic [ref=e20]: /
+          - generic [ref=e21]: Disruption desk
+        - generic [ref=e22]: ATC · PILOT · GROUNDOne orchestrator, rules in code
+      - generic [ref=e24]:
+        - paragraph [ref=e28]: Source
+        - radiogroup "Source" [ref=e29]:
+          - generic [ref=e31] [cursor=pointer]:
+            - radio "Replay saved run" [checked] [ref=e33]
+            - paragraph [ref=e38]: Replay saved run
+          - generic [ref=e40] [cursor=pointer]:
+            - radio "Run new scenario" [ref=e42]
+            - paragraph [ref=e46]: Run new scenario
+      - generic [ref=e48]:
+        - paragraph [ref=e52]: Replay saved run
+        - group [ref=e54]:
+          - combobox "Replay saved run" [ref=e55]: scenario_a · UA1680 · CONSENSUS T2
+          - button "Open" [ref=e56] [cursor=pointer]
+      - generic [ref=e64]:
+        - generic [ref=e65]: CONSENSUS
+        - generic [ref=e66]: scenario_a
+        - generic [ref=e67]: T2
+        - generic [ref=e68]: Stub agents
+      - paragraph [ref=e73]: Read-only replay · saved run files
+      - group [ref=e76]:
+        - generic [ref=e78] [cursor=pointer]:
+          - generic [aria-hidden] [ref=e80]: keyboard_arrow_right
+          - paragraph [ref=e83]: What this view reads
+  - generic [ref=e4]:
+    - banner
+    - main [ref=e5]:
+      - generic [ref=e86]:
+        - generic [ref=e90]:
+          - generic [ref=e91]:
+            - generic [ref=e92]:
+              - generic [ref=e93]:
+                - generic [ref=e94]: Triad / disruption desk
+                - generic [ref=e95]: RUN 2015-09-17-UA1680-r293614
+              - generic [ref=e96]:
+                - generic "Saved run" [ref=e97]: scenario_a
+                - generic [ref=e98]: Stub agents
+            - generic [ref=e99]:
+              - generic [ref=e100]:
+                - generic [ref=e101]:
+                  - generic [ref=e102]: ORD
+                  - generic [ref=e103]: →
+                  - generic [ref=e104]: LAX
+                - generic [ref=e105]:
+                  - generic [ref=e106]: UA1680
+                  - generic [ref=e107]: ·
+                  - generic [ref=e108]: 17 Sep 2015
+                  - generic [ref=e109]: ·
+                  - generic [ref=e110]: Tail N69826
+                  - generic [ref=e111]: ·
+                  - generic [ref=e112]: 1,744 mi
+                  - generic [ref=e113]: ·
+                  - generic [ref=e114]:
+                    - text: A320 · wake M · 150 seats
+                    - generic "Seeded scenario value" [ref=e115]: synthetic
+                - generic [ref=e116]: "Weather at LAX: arrival rate cut from 72 to 47/h. Inbound UA1680 is 56 min weather-delayed."
+                - generic [ref=e117]:
+                  - generic [ref=e118]: DOT delay causes
+                  - generic [ref=e119]: Weather 56
+                  - generic [ref=e120]: Late aircraft 0
+                  - generic [ref=e121]: Carrier 0
+                  - generic [ref=e122]: Air system 27
+                  - generic [ref=e123]: Security 0
+              - generic [ref=e124]:
+                - generic [ref=e125]:
+                  - generic [ref=e126]:
+                    - generic [ref=e127]: Decision time
+                    - generic "Derived from the real delay and the mode" [ref=e128]: derived
+                  - generic [ref=e129]: 00:56+1
+                  - generic [ref=e130]: 60 min before expected arrival
+                - generic [ref=e131]:
+                  - generic [ref=e132]:
+                    - generic [ref=e133]: Expected ETA
+                    - generic "Expected arrival before the agents negotiate" [ref=e134]: derived
+                  - generic [ref=e135]: 01:56+1
+                  - generic [ref=e136]: before negotiation
+                - generic [ref=e137]:
+                  - generic [ref=e138]:
+                    - generic [ref=e139]: Scheduled arrival
+                    - generic "Real DOT row value" [ref=e140]: real
+                  - generic [ref=e141]: 01:00+1
+                  - generic [ref=e142]: from the DOT row
+                - generic [ref=e143]:
+                  - generic [ref=e144]:
+                    - generic [ref=e145]: Mode
+                    - generic "AIRBORNE or GROUND, set by the delay rules" [ref=e146]: derived
+                  - generic [ref=e147]: AIRBORNE
+                  - generic [ref=e148]: decision context
+          - generic [ref=e149]:
+            - generic [ref=e150]:
+              - generic [ref=e151]: Real
+              - generic [ref=e152]: DOT row
+              - text: route · flight · date · scheduled times · delay causes
+            - generic [ref=e153]:
+              - generic [ref=e154]: Derived
+              - generic [ref=e155]: Expected ETA
+              - text: decision time · mode
+            - generic [ref=e156]:
+              - generic [ref=e157]: Synthetic
+              - generic [ref=e158]: Seeded
+              - text: aircraft type / wake · runways · gates · fuel · crew · NOTAM
+        - generic [ref=e163]:
+          - generic [ref=e164]:
+            - generic [ref=e165]: Outcome
+            - generic [ref=e166]: CONSENSUS
+            - generic [ref=e167]: Agreed by all three agents
+          - generic [ref=e168]:
+            - generic [ref=e169]: Turn reached
+            - generic [ref=e170]: T2
+            - generic [ref=e171]: within the 2-turn cap
+          - generic [ref=e172]:
+            - generic [ref=e173]: Committed option
+            - generic [ref=e174]: CTR-ATC-1
+            - generic [ref=e175]: ETA 02:05+1 · Rwy 7R · Gate B15
+          - generic [ref=e176]:
+            - generic [ref=e177]: Safety blocks
+            - generic [ref=e178]: "0"
+            - generic [ref=e179]: no blocks raised
+          - generic [ref=e180]:
+            - generic [ref=e181]: Hash chain
+            - generic [ref=e182]: VERIFIED
+            - generic [ref=e183]: 28 log entries
+        - generic [ref=e188]:
+          - generic [ref=e189]:
+            - generic [ref=e190]: Setup
+            - generic [ref=e191]: 13 options · 13 pass checks
+          - generic [ref=e192]:
+            - generic [ref=e193]: Turn 1 · Propose
+            - generic [ref=e194]: 3 proposals · 11 vetoes
+          - generic [ref=e195]:
+            - generic [ref=e196]: Turn 2 · Ballot
+            - generic [ref=e197]: 3 ballots · 4 shortlist
+          - generic [ref=e198]:
+            - generic [ref=e199]: Outcome
+            - generic [ref=e200]: CTR-ATC-1
+        - generic [ref=e202]:
+          - tablist [ref=e203]:
+            - tab [selected] [ref=e204] [cursor=pointer]:
+              - paragraph [ref=e206]: Negotiation
+            - tab [ref=e208] [cursor=pointer]:
+              - paragraph [ref=e210]: Options
+            - tab [ref=e211] [cursor=pointer]:
+              - paragraph [ref=e213]: Resolution
+            - tab [ref=e214] [cursor=pointer]:
+              - paragraph [ref=e216]: Safety
+            - tab [ref=e217] [cursor=pointer]:
+              - paragraph [ref=e219]: Audit
+            - tab [ref=e220] [cursor=pointer]:
+              - paragraph [ref=e222]: Evaluation
+          - tabpanel "Negotiation" [ref=e223]:
+            - generic [ref=e224]:
+              - generic [ref=e229]:
+                - generic [ref=e230]:
+                  - generic [ref=e231]: Key view
+                  - generic [ref=e232]: Negotiation
+                - generic [ref=e233]: Turn cap 2 · 3 proposals · 3 ballots
+              - generic [ref=e238]:
+                - generic [ref=e239]:
+                  - generic [ref=e240]: Orchestrator · rule-based · no AI
+                  - generic [ref=e241]: Hub-and-spoke negotiation
+                  - generic [ref=e242]: Routes public messages · enforces the 2-turn cap · re-checks every commit
+                - generic [ref=e243]:
+                  - generic [ref=e244]:
+                    - generic [ref=e245]:
+                      - generic [ref=e246]: ATC
+                      - generic [ref=e247]: stub
+                    - generic [ref=e248]: T1 top OPT-02
+                    - generic [ref=e249]: 4/4 approved
+                  - generic [ref=e250]:
+                    - generic [ref=e251]:
+                      - generic [ref=e252]: PILOT
+                      - generic [ref=e253]: stub
+                    - generic [ref=e254]: T1 top OPT-01
+                    - generic [ref=e255]: 4/4 approved
+                  - generic [ref=e256]:
+                    - generic [ref=e257]:
+                      - generic [ref=e258]: GROUND
+                      - generic [ref=e259]: stub
+                    - generic [ref=e260]: T1 top OPT-01
+                    - generic [ref=e261]: 4/4 approved
+              - generic [ref=e266]:
+                - generic [ref=e267]: "01"
+                - generic [ref=e268]:
+                  - generic [ref=e269]: Propose
+                  - generic [ref=e270]: Parallel · each agent sees only the public event and its own private inputs
+              - generic [ref=e273]:
+                - generic [ref=e275]:
+                  - generic [ref=e280]:
+                    - generic [ref=e281]:
+                      - generic [ref=e282]:
+                        - generic [ref=e283]: A
+                        - generic [ref=e284]:
+                          - generic [ref=e285]: ATC
+                          - generic [ref=e286]: Air traffic control
+                      - generic [ref=e287]: Turn 1 · Propose
+                    - generic [ref=e288]:
+                      - generic [ref=e289]:
+                        - generic [ref=e290]: Top choice
+                        - generic [ref=e291]: OPT-02
+                        - generic [ref=e292]: ranked 1 of 11 feasible options
+                      - generic [ref=e293]: ATC2 veto(es)
+                    - generic [ref=e294]:
+                      - generic [ref=e295]: Vetoes from code
+                      - generic [ref=e296]: "2"
+                    - generic [ref=e297]:
+                      - generic "Code veto · check chk-ATC-0002" [ref=e298]:
+                        - generic [ref=e299]: OPT-01
+                        - text: ATC-RWY-01
+                      - generic "Code veto · check chk-ATC-0026" [ref=e300]:
+                        - generic [ref=e301]: OPT-09
+                        - text: ATC-RWY-01
+                    - generic [ref=e302]:
+                      - generic [ref=e303]: Objections
+                      - generic [ref=e304]: "9"
+                    - generic [ref=e305]:
+                      - generic "OTHER score 0.72 is at/above threshold 0.70 · OTHER score 0.85 is at/above threshold 0.70 · OTHER score 0.89 is at/above threshold 0.70" [ref=e306]:
+                        - generic [ref=e307]: OTHER
+                        - text: ×3
+                      - generic "HOLDING_STACK score 0.78 is at/above threshold 0.70 · HOLDING_STACK score 0.93 is at/above threshold 0.70 · HOLDING_STACK score 1.00 is at/above threshold 0.70" [ref=e308]:
+                        - generic [ref=e309]: HOLDING_STACK
+                        - text: ×3
+                      - generic "THROUGHPUT score 0.82 is at/above threshold 0.70 · THROUGHPUT score 0.93 is at/above threshold 0.70 · THROUGHPUT score 1.00 is at/above threshold 0.70" [ref=e310]:
+                        - generic [ref=e311]: THROUGHPUT
+                        - text: ×3
+                    - generic [ref=e312]:
+                      - generic [ref=e313]: Counter-option
+                      - generic [ref=e314]: validated by code
+                    - generic [ref=e316]:
+                      - generic [ref=e317]: CTR-ATC-1
+                      - text: base OPT-01
+                    - generic [ref=e318]: arrive 02:05+1 · hold 9 min · gate B15 · runway 7R
+                    - generic [ref=e319]: "ATC ranks OPT-02 first (2 vetoes, 9 objections). Counter-option on OPT-01: arrival, holding."
+                    - generic [ref=e320]:
+                      - generic [ref=e321]: Perceived facts
+                      - generic [ref=e322]: "1"
+                    - table [ref=e323]:
+                      - rowgroup [ref=e324]:
+                        - row [ref=e325]:
+                          - cell "closed_taxiways STUB" [ref=e326]:
+                            - text: closed_taxiways
+                            - generic "Deterministic stub perception" [ref=e327]: STUB
+                          - cell "none listed confidence 100% · cite notam-2015-09-17-UA1680-r293614-closed" [ref=e328]:
+                            - text: none listed
+                            - generic [ref=e329]: confidence 100% · cite notam-2015-09-17-UA1680-r293614-closed
+                    - generic [ref=e330]:
+                      - generic [ref=e331]: Citations
+                      - generic [ref=e332]: "1"
+                    - generic [ref=e334]:
+                      - text: Synthetic NOTAM · notam-2015-09-17-UA1680-r293614-closed
+                      - generic [ref=e335]: synthetic
+                  - group [ref=e338]:
+                    - generic [ref=e340] [cursor=pointer]:
+                      - generic [aria-hidden] [ref=e342]: keyboard_arrow_right
+                      - paragraph [ref=e345]: Message detail
+                - generic [ref=e347]:
+                  - generic [ref=e352]:
+                    - generic [ref=e353]:
+                      - generic [ref=e354]:
+                        - generic [ref=e355]: P
+                        - generic [ref=e356]:
+                          - generic [ref=e357]: PILOT
+                          - generic [ref=e358]: Flight crew
+                      - generic [ref=e359]: Turn 1 · Propose
+                    - generic [ref=e360]:
+                      - generic [ref=e361]:
+                        - generic [ref=e362]: Top choice
+                        - generic [ref=e363]: OPT-01
+                        - generic [ref=e364]: ranked 1 of 7 feasible options
+                      - generic [ref=e365]: PILOT6 veto(es)
+                    - generic [ref=e366]:
+                      - generic [ref=e367]: Vetoes from code
+                      - generic [ref=e368]: "6"
+                    - generic [ref=e369]:
+                      - generic "Code veto · check chk-PILOT-0025" [ref=e370]:
+                        - generic [ref=e371]: OPT-07
+                        - text: PLT-FUEL-01
+                      - generic "Code veto · check chk-PILOT-0029" [ref=e372]:
+                        - generic [ref=e373]: OPT-08
+                        - text: PLT-FUEL-01
+                      - generic "Code veto · check chk-PILOT-0033" [ref=e374]:
+                        - generic [ref=e375]: OPT-09
+                        - text: PLT-FUEL-01
+                      - generic "Code veto · check chk-PILOT-0037" [ref=e376]:
+                        - generic [ref=e377]: OPT-10
+                        - text: PLT-FUEL-01
+                      - generic "Code veto · check chk-PILOT-0041" [ref=e378]:
+                        - generic [ref=e379]: OPT-11
+                        - text: PLT-FUEL-01
+                      - generic "Code veto · check chk-PILOT-0045" [ref=e380]:
+                        - generic [ref=e381]: OPT-12
+                        - text: PLT-FUEL-01
+                    - generic [ref=e382]:
+                      - generic [ref=e383]: Objections
+                      - generic [ref=e384]: "5"
+                    - generic [ref=e385]:
+                      - generic "TURBULENCE score 0.70 is at/above threshold 0.70 · TURBULENCE score 0.70 is at/above threshold 0.70 · TURBULENCE score 0.70 is at/above threshold 0.70" [ref=e386]:
+                        - generic [ref=e387]: TURBULENCE
+                        - text: ×3
+                      - generic "FUEL score 0.96 is at/above threshold 0.70 · FUEL score 0.85 is at/above threshold 0.70" [ref=e388]:
+                        - generic [ref=e389]: FUEL
+                        - text: ×2
+                    - generic [ref=e390]: PILOT ranks OPT-01 first (6 vetoes, 5 objections).
+                    - generic [ref=e391]:
+                      - generic [ref=e392]: Perceived facts
+                      - generic [ref=e393]: "2"
+                    - table [ref=e394]:
+                      - rowgroup [ref=e395]:
+                        - row [ref=e396]:
+                          - cell "turbulence STUB" [ref=e397]:
+                            - text: turbulence
+                            - generic "Deterministic stub perception" [ref=e398]: STUB
+                          - cell "FL320 MOD · FL340 NONE · FL360 LGT · FL380 NONE confidence 100% · cite pirep-2015-09-17-UA1680-r293614" [ref=e399]:
+                            - text: FL320 MOD · FL340 NONE · FL360 LGT · FL380 NONE
+                            - generic [ref=e400]: confidence 100% · cite pirep-2015-09-17-UA1680-r293614
+                        - row [ref=e401]:
+                          - cell "pax_notes STUB" [ref=e402]:
+                            - text: pax_notes
+                            - generic "Deterministic stub perception" [ref=e403]: STUB
+                          - cell "Company priority passenger in seat 2A confidence 100% · cite pax-2015-09-17-UA1680-r293614" [ref=e404]:
+                            - text: Company priority passenger in seat 2A
+                            - generic [ref=e405]: confidence 100% · cite pax-2015-09-17-UA1680-r293614
+                    - generic [ref=e406]:
+                      - generic [ref=e407]: Citations
+                      - generic [ref=e408]: "2"
+                    - generic [ref=e409]:
+                      - generic [ref=e410]:
+                        - text: AIM §7-1-21 (synthetic PIREP extract) · pirep-2015-09-17-UA1680-r293614
+                        - generic [ref=e411]: synthetic
+                      - generic [ref=e412]:
+                        - text: Synthetic passenger service notes · pax-2015-09-17-UA1680-r293614
+                        - generic [ref=e413]: synthetic
+                  - group [ref=e416]:
+                    - generic [ref=e418] [cursor=pointer]:
+                      - generic [aria-hidden] [ref=e420]: keyboard_arrow_right
+                      - paragraph [ref=e423]: Message detail
+                - generic [ref=e425]:
+                  - generic [ref=e430]:
+                    - generic [ref=e431]:
+                      - generic [ref=e432]:
+                        - generic [ref=e433]: G
+                        - generic [ref=e434]:
+                          - generic [ref=e435]: GROUND
+                          - generic [ref=e436]: Ground operations
+                      - generic [ref=e437]: Turn 1 · Propose
+                    - generic [ref=e438]:
+                      - generic [ref=e439]:
+                        - generic [ref=e440]: Top choice
+                        - generic [ref=e441]: OPT-01
+                        - generic [ref=e442]: ranked 1 of 10 feasible options
+                      - generic [ref=e443]: GROUND3 veto(es)
+                    - generic [ref=e444]:
+                      - generic [ref=e445]: Vetoes from code
+                      - generic [ref=e446]: "3"
+                    - generic [ref=e447]:
+                      - generic "Code veto · check chk-GROUND-0026" [ref=e448]:
+                        - generic [ref=e449]: OPT-05
+                        - text: GND-GATE-02
+                      - generic "Code veto · check chk-GROUND-0056" [ref=e450]:
+                        - generic [ref=e451]: OPT-10
+                        - text: GND-GATE-02
+                      - generic "Code veto · check chk-GROUND-0070" [ref=e452]:
+                        - generic [ref=e453]: OPT-12
+                        - text: GND-TURN-01
+                    - generic [ref=e454]:
+                      - generic [ref=e455]: Objections
+                      - generic [ref=e456]: "10"
+                    - generic [ref=e457]:
+                      - generic "DELAY score 0.70 is at/above threshold 0.70" [ref=e458]:
+                        - generic [ref=e459]: DELAY
+                        - text: ×1
+                      - generic "GATE_CHANGE score 1.00 is at/above threshold 0.70 · GATE_CHANGE score 1.00 is at/above threshold 0.70 · GATE_CHANGE score 1.00 is at/above threshold 0.70 · GATE_CHANGE score 1.00 is at/above threshold 0.70 · GATE_CHANGE score 1.00 is at/above threshold 0.70 ·" [ref=e460]:
+                        - generic [ref=e461]: GATE_CHANGE
+                        - text: ×6
+                      - generic "NEXT_LEG score 0.75 is at/above threshold 0.70 · NEXT_LEG score 1.00 is at/above threshold 0.70 · NEXT_LEG score 1.00 is at/above threshold 0.70" [ref=e462]:
+                        - generic [ref=e463]: NEXT_LEG
+                        - text: ×3
+                    - generic [ref=e464]: GROUND ranks OPT-01 first (3 vetoes, 10 objections).
+                    - generic [ref=e465]:
+                      - generic [ref=e466]: Perceived facts
+                      - generic [ref=e467]: "1"
+                    - table [ref=e468]:
+                      - rowgroup [ref=e469]:
+                        - row [ref=e470]:
+                          - cell "defect STUB" [ref=e471]:
+                            - text: defect
+                            - generic "Deterministic stub perception" [ref=e472]: STUB
+                          - cell "none confidence 100% · no citation" [ref=e473]:
+                            - text: none
+                            - generic [ref=e474]: confidence 100% · no citation
+                    - generic [ref=e475]: Citations
+                    - generic [ref=e477]: No citations recorded.
+                  - group [ref=e480]:
+                    - generic [ref=e482] [cursor=pointer]:
+                      - generic [aria-hidden] [ref=e484]: keyboard_arrow_right
+                      - paragraph [ref=e487]: Message detail
+              - generic [ref=e492]:
+                - generic [ref=e493]:
+                  - generic [ref=e494]: Orchestrator · no AI · no vote
+                  - generic [ref=e495]: Borda shortlist
+                  - generic [ref=e496]: Vetoed options are removed before points. All three agents carry equal weight. No new options are allowed in Turn 2.
+                  - generic [ref=e497]:
+                    - generic [ref=e498]:
+                      - text: OPT-02
+                      - generic [ref=e499]: "8"
+                    - generic [ref=e500]:
+                      - text: OPT-03
+                      - generic [ref=e501]: "6"
+                    - generic [ref=e502]:
+                      - text: OPT-04
+                      - generic [ref=e503]: "4"
+                    - generic [ref=e504]:
+                      - text: CTR-ATC-1
+                      - generic [ref=e505]: "0"
+                    - generic [ref=e506]:
+                      - text: OPT-06
+                      - generic [ref=e507]: "0"
+                - generic [ref=e508]:
+                  - generic [ref=e509]:
+                    - generic [ref=e510]: Shortlist
+                    - generic [ref=e511]: "4"
+                  - generic [ref=e512]:
+                    - generic [ref=e513]: Options
+                    - generic [ref=e514]: OPT-02, OPT-03, OPT-04, CTR-ATC-1
+                  - generic [ref=e515]:
+                    - generic [ref=e516]: First-choice votes
+                    - generic [ref=e517]: OPT-02 ×1
+                  - generic [ref=e518]:
+                    - generic [ref=e519]: Counters validated
+                    - generic [ref=e520]: CTR-ATC-1
+                  - generic [ref=e521]:
+                    - generic [ref=e522]: Counters rejected
+                    - generic [ref=e523]: none
+              - generic [ref=e528]:
+                - generic [ref=e529]: "02"
+                - generic [ref=e530]:
+                  - generic [ref=e531]: Ballot
+                  - generic [ref=e532]: Fixed shortlist · approvals only · no new options
+              - generic [ref=e535]:
+                - generic [ref=e537]:
+                  - generic [ref=e542]:
+                    - generic [ref=e543]:
+                      - generic [ref=e544]:
+                        - generic [ref=e545]: A
+                        - generic [ref=e546]:
+                          - generic [ref=e547]: ATC
+                          - generic [ref=e548]: Air traffic control
+                      - generic [ref=e549]: Turn 2 · Ballot
+                    - generic [ref=e550]:
+                      - generic [ref=e551]:
+                        - generic [ref=e552]: Approved first
+                        - generic [ref=e553]: CTR-ATC-1
+                        - generic [ref=e554]: 4 approved · 4 votes
+                      - generic [ref=e555]: ATC4/4
+                    - generic [ref=e556]:
+                      - generic [ref=e557]: Votes
+                      - generic [ref=e558]: "4"
+                    - generic [ref=e559]:
+                      - generic [ref=e560]:
+                        - generic [ref=e561]: OPT-02
+                        - generic [ref=e562]: APPROVE
+                      - generic [ref=e563]:
+                        - generic [ref=e564]: OPT-03
+                        - generic [ref=e565]: APPROVE
+                      - generic [ref=e566]:
+                        - generic [ref=e567]: OPT-04
+                        - generic [ref=e568]: APPROVE
+                      - generic [ref=e569]:
+                        - generic [ref=e570]: CTR-ATC-1
+                        - generic [ref=e571]: APPROVE
+                    - generic [ref=e572]: ATC approves CTR-ATC-1 (4 of 4 shortlisted).
+                    - generic [ref=e573]:
+                      - generic [ref=e574]: Citations
+                      - generic [ref=e575]: "1"
+                    - generic [ref=e576]: Synthetic NOTAM · notam-2015-09-17-UA1680-r293614-closed
+                  - group [ref=e579]:
+                    - generic [ref=e581] [cursor=pointer]:
+                      - generic [aria-hidden] [ref=e583]: keyboard_arrow_right
+                      - paragraph [ref=e586]: Ballot detail
+                - generic [ref=e588]:
+                  - generic [ref=e593]:
+                    - generic [ref=e594]:
+                      - generic [ref=e595]:
+                        - generic [ref=e596]: P
+                        - generic [ref=e597]:
+                          - generic [ref=e598]: PILOT
+                          - generic [ref=e599]: Flight crew
+                      - generic [ref=e600]: Turn 2 · Ballot
+                    - generic [ref=e601]:
+                      - generic [ref=e602]:
+                        - generic [ref=e603]: Approved first
+                        - generic [ref=e604]: OPT-03
+                        - generic [ref=e605]: 4 approved · 4 votes
+                      - generic [ref=e606]: PILOT4/4
+                    - generic [ref=e607]:
+                      - generic [ref=e608]: Votes
+                      - generic [ref=e609]: "4"
+                    - generic [ref=e610]:
+                      - generic [ref=e611]:
+                        - generic [ref=e612]: OPT-02
+                        - generic [ref=e613]: APPROVE
+                      - generic [ref=e614]:
+                        - generic [ref=e615]: OPT-03
+                        - generic [ref=e616]: APPROVE
+                      - generic [ref=e617]:
+                        - generic [ref=e618]: OPT-04
+                        - generic [ref=e619]: APPROVE
+                      - generic [ref=e620]:
+                        - generic [ref=e621]: CTR-ATC-1
+                        - generic [ref=e622]: APPROVE
+                    - generic [ref=e623]: PILOT approves OPT-03 (4 of 4 shortlisted).
+                    - generic [ref=e624]:
+                      - generic [ref=e625]: Citations
+                      - generic [ref=e626]: "2"
+                    - generic [ref=e627]: AIM §7-1-21 (synthetic PIREP extract) · pirep-2015-09-17-UA1680-r293614
+                    - generic [ref=e628]: Synthetic passenger service notes · pax-2015-09-17-UA1680-r293614
+                  - group [ref=e631]:
+                    - generic [ref=e633] [cursor=pointer]:
+                      - generic [aria-hidden] [ref=e635]: keyboard_arrow_right
+                      - paragraph [ref=e638]: Ballot detail
+                - generic [ref=e640]:
+                  - generic [ref=e645]:
+                    - generic [ref=e646]:
+                      - generic [ref=e647]:
+                        - generic [ref=e648]: G
+                        - generic [ref=e649]:
+                          - generic [ref=e650]: GROUND
+                          - generic [ref=e651]: Ground operations
+                      - generic [ref=e652]: Turn 2 · Ballot
+                    - generic [ref=e653]:
+                      - generic [ref=e654]:
+                        - generic [ref=e655]: Approved first
+                        - generic [ref=e656]: CTR-ATC-1
+                        - generic [ref=e657]: 4 approved · 4 votes
+                      - generic [ref=e658]: GROUND4/4
+                    - generic [ref=e659]:
+                      - generic [ref=e660]: Votes
+                      - generic [ref=e661]: "4"
+                    - generic [ref=e662]:
+                      - generic [ref=e663]:
+                        - generic [ref=e664]: OPT-02
+                        - generic [ref=e665]: APPROVE
+                      - generic [ref=e666]:
+                        - generic [ref=e667]: OPT-03
+                        - generic [ref=e668]: APPROVE
+                      - generic [ref=e669]:
+                        - generic [ref=e670]: OPT-04
+                        - generic [ref=e671]: APPROVE
+                      - generic [ref=e672]:
+                        - generic [ref=e673]: CTR-ATC-1
+                        - generic [ref=e674]: APPROVE
+                    - generic [ref=e675]: GROUND approves CTR-ATC-1 (4 of 4 shortlisted).
+                  - group [ref=e678]:
+                    - generic [ref=e680] [cursor=pointer]:
+                      - generic [aria-hidden] [ref=e682]: keyboard_arrow_right
+                      - paragraph [ref=e685]: Ballot detail
+              - generic [ref=e690]:
+                - generic [ref=e691]: OUTCOME
+                - generic [ref=e692]:
+                  - generic [ref=e693]: CONSENSUS · CTR-ATC-1
+                  - generic [ref=e694]: All three agents approved this option in the Turn-2 ballot.
+        - generic [ref=e699]:
+          - generic [ref=e700]: Triad · one orchestrator + three subagents · run 2015-09-17-UA1680-r293614
+          - generic [ref=e701]: Times local · ICAO wake categories · synthetic values seeded and labelled

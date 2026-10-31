@@ -386,7 +386,7 @@ class LLMAgent(BaseAgent):
             facts.append(
                 PerceivedFact(
                     key="turbulence",
-                    value=dict(perception.turbulence),
+                    value=perception.turbulence_map(),
                     confidence=confidence,
                     citation=citation,
                     source="LLM",
@@ -608,7 +608,7 @@ class LLMAgent(BaseAgent):
         base = by_id.get(decision.base_option_id)
         if base is None:
             return None, "dropped counter: unknown base option"
-        changes = dict(decision.changes or {})
+        changes = decision.changes_dict()
         bad = sorted(set(changes) - _COUNTER_FIELDS[self.role])
         if bad:
             return None, f"dropped counter: non-controllable fields {bad}"
@@ -635,7 +635,10 @@ class LLMAgent(BaseAgent):
             return None, "dropped counter: invalid value"
         if self._failing(self.check(public, candidate)):
             return None, "dropped counter: failed own hard check"
-        return CounterOption(base_option_id=base.option_id, changes=changes), ""
+        # LLM change values arrive as text; report them with the option's own
+        # field types (ints for minutes/levels, str for ids), like the stub does.
+        typed = {key: getattr(candidate, key) for key in changes}
+        return CounterOption(base_option_id=base.option_id, changes=typed), ""
 
     # ------------------------------------------------------------------ turn 2 / turn 3
     def turn2(

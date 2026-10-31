@@ -113,13 +113,124 @@ def _sidebar() -> Path | None:
         return _new_run_form()
 
 
+ROW_FILTERS = {"All": None, "Weather": "WEATHER", "Late aircraft": "LATE_AIRCRAFT"}
+STUB_OUTCOME_COPY = {
+    "TURN1": "agreed at Turn 1",
+    "TURN2": "agreed at Turn 2",
+    "TURN3": "agreed at Turn 3",
+    "FALLBACK": "no agreement, fallback",
+}
+
+
+def _row_catalog() -> tuple[list[dict], bool]:
+    """Curated negotiable rows, or the demo scenarios if the catalogue is unavailable."""
+
+    try:
+        from triad.data.catalog import negotiable_rows
+
+        rows = [
+            {
+                "row_index": int(choice.row_index),
+                "label": str(choice.label),
+                "mode": str(choice.mode),
+                "disruption": str(choice.disruption),
+                "delay_min": choice.delay_min,
+                "n_safe_options": choice.n_safe_options,
+                "stub_outcome": choice.stub_outcome,
+                "defect": getattr(choice, "defect", None),
+            }
+            for choice in negotiable_rows()
+        ]
+        if rows:
+            return rows, True
+    except Exception:  # noqa: BLE001 - catalogue missing or still being built
+        pass
+    labels = dict(scenario_choices())
+    rows = []
+    for name, item in demo_scenarios().items():
+        title = labels.get(name, name)
+        letter, _, rest = title.partition(" · ")
+        row = int(item.get("row") or 0)
+        rows.append(
+            {
+                "row_index": row,
+                "label": f"★ Demo {letter} · {rest or title} · row {row}",
+                "mode": str(item.get("mode") or ""),
+                "disruption": None,
+                "delay_min": None,
+                "n_safe_options": None,
+                "stub_outcome": None,
+                "defect": item.get("defect"),
+            }
+        )
+    return rows, False
+
+
+def _row_summary(item: dict) -> str:
+    parts = [item.get("mode") or ""]
+    if item.get("disruption"):
+        kind = str(item["disruption"]).replace("_", " ")
+        parts.append(f"{kind} +{item['delay_min']} min" if item.get("delay_min") is not None else kind)
+    if item.get("n_safe_options") is not None:
+        count = int(item["n_safe_options"])
+        parts.append(f"{count} safe option{'s' if count != 1 else ''}")
+    if item.get("stub_outcome"):
+        parts.append("stub: " + STUB_OUTCOME_COPY.get(item["stub_outcome"], str(item["stub_outcome"]).lower()))
+    if item.get("defect"):
+        parts.append(f"defect {item['defect']}")
+    return " · ".join(part for part in parts if part)
+
+
+def _row_picker() -> tuple[int, str | None]:
+    """Dataset-row dropdown; returns (row_index, scenario default defect)."""
+
+    rows, from_catalog = _row_catalog()
+    if not rows:
+        st.warning("No dataset rows available.")
+        return 293614, None
+    shown = rows
+    if from_catalog:
+        picked = st.segmented_control(
+            "Disruption",
+            list(ROW_FILTERS),
+            default="All",
+            key="row_filter",
+            label_visibility="collapsed",
+        )
+        kind = ROW_FILTERS.get(picked or "All")
+        shown = [item for item in rows if kind is None or item["disruption"] == kind] or rows
+    by_row = {item["row_index"]: item for item in shown}
+    options = list(by_row)
+    if st.session_state.get("row_choice") not in by_row:
+        st.session_state["row_choice"] = options[0]
+    row = st.selectbox(
+        "Dataset row",
+        options,
+        key="row_choice",
+        format_func=lambda value: by_row[value]["label"] if value in by_row else str(value),
+        placeholder="Type a date, flight or airport",
+    )
+    item = by_row.get(row, shown[0])
+    summary = _row_summary(item)
+    if summary:
+        st.caption(summary)
+    if from_catalog:
+        st.caption(
+            f"{len(rows)} rows where the three agents have to negotiate "
+            "(checked with the code-only agents)."
+        )
+    else:
+        st.caption("Demo rows only. The full list of negotiable rows is not available yet.")
+    return int(item["row_index"]), item.get("defect")
+
+
 def _new_run_form() -> Path | None:
     md('<div class="td-side-label">New negotiation</div>')
     pick_by = st.radio(
         "Choose by", ["Demo scenario", "Dataset row"], key="pick_by", horizontal=True
     )
     scenario_defect = None
-    seed = 0
+    seed = 0  # fixed: the curated rows were checked at seed 0
     row = 293614
     scenario_name = None
 
@@ -135,27 +246,13 @@ def _new_run_form() -> Path | None:
         )
         item = demo_scenarios().get(scenario_name, {})
         row = int(item.get("row") or 293614)
-        seed = int(item.get("seed") or 0)
         scenario_defect = item.get("defect")
-        st.caption(f"DOT row {row} · seed {seed} · {item.get('mode', '')}")
+        st.caption(f"DOT row {row} · {item.get('mode', '')}")
         description = SCENARIO_COPY.get(scenario_name) or str(item.get("notes") or "").split(";")[0]
         if description:
             st.caption(description)
     else:
-        row = int(
-            st.number_input(
-                "Dataset row",
-                min_value=0,
-                value=293614,
-                step=1,
-                key="row_input",
-                help="Any row with WEATHER_DELAY > 15 or LATE_AIRCRAFT_DELAY > 20.",
-            )
-        )
-        seed = int(
-            st.number_input("Seed", min_value=0, value=0, step=1, key="seed_input")
-        )
-        st.caption("Candidate rows need WEATHER_DELAY > 15 or LATE_AIRCRAFT_DELAY > 20.")
+        row, scenario_defect = _row_picker()
 
     md('<div class="td-side-label">Run controls</div>')
     ai_off = st.checkbox("AI off — deterministic fallback", key="ai_off")
@@ -473,7 +570,7 @@ def _live_view(live, status: dict, run, meta: dict, load_error: Exception | None
         else ("LLM agents" if meta.get("impl") == "llm" else "Stub agents")
         + (" · red-team Pilot" if meta.get("red_team") else "")
     )
-    _section("Live run", "Negotiation in progress", f"Row {meta.get('row')} · seed {meta.get('seed')} · {agents}")
+    _section("Live run", "Negotiation in progress", f"Row {meta.get('row')} · {agents}")
     md(
         live_ui.strip_html(
             live_ui.phase_steps(

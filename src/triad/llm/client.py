@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 from triad.config import CACHE_DIR, ROOT
 
 DEFAULT_BASE_URL = "https://soclaas-api.comp.nus.edu.sg/v1"
-DEFAULT_MODEL = "x-test-2"
+DEFAULT_MODEL = "qwen3.6:35b"
 DEFAULT_TIMEOUT_S = 90.0
 
 
@@ -198,7 +198,12 @@ class LLMClient:
             raise LLMError("LLM_API_KEY (or SOCLAAS_API_KEY) is not set")
         from openai import OpenAI
 
-        client = OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=self.timeout)
+        client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=self.timeout,
+            max_retries=0,
+        )
         response = client.chat.completions.create(**kwargs)
         content = response.choices[0].message.content or ""
         usage = getattr(response, "usage", None)

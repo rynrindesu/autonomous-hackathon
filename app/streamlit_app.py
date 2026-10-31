@@ -14,7 +14,7 @@ if str(APP_DIR) not in sys.path:
 
 import streamlit as st  # noqa: E402
 
-from components import render, theme  # noqa: E402
+from components import evaluation, render, theme  # noqa: E402
 from components.data import (  # noqa: E402
     ROLES,
     available_runs,
@@ -616,7 +616,7 @@ def main() -> None:
     md(render.status_strip_html(run))
     md(render.flow_html(run))
 
-    tabs = st.tabs(["Negotiation", "Options", "Resolution", "Safety", "Audit"])
+    tabs = st.tabs(["Negotiation", "Options", "Resolution", "Safety", "Audit", "Evaluation"])
     with tabs[0]:
         _negotiation_tab(run)
     with tabs[1]:
@@ -627,6 +627,8 @@ def main() -> None:
         _safety_tab(run)
     with tabs[4]:
         _audit_tab(run)
+    with tabs[5]:
+        evaluation.render_panel()
 
     md(render.footer_html(run))
 

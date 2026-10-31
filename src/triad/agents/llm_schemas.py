@@ -26,14 +26,17 @@ class LLMModel(BaseModel):
 
 class AtcPerception(LLMModel):
     closed_taxiways: list[str] = Field(default_factory=list)
-    confidence: float = 0.0
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="0..1. Use >= 0.6 when the extraction is grounded in the report or a source.",
+    )
     citations: list[str] = Field(
-        default_factory=list,
         description=(
             "Chunk ids from the <source> blocks. If you report any non-empty fact, "
-            "this MUST contain at least one valid chunk id; leave it empty only when "
-            "the report contains no relevant fact."
-        ),
+            "this MUST contain at least one valid chunk id; use [] only when the report "
+            "contains no relevant fact."
+        )
     )
     notes: str = ""
 
@@ -41,14 +44,17 @@ class AtcPerception(LLMModel):
 class PilotPerception(LLMModel):
     turbulence: dict[str, TurbulenceLevel] = Field(default_factory=dict)
     flagged_notes: list[str] = Field(default_factory=list)
-    confidence: float = 0.0
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="0..1. Use >= 0.6 when the extraction is grounded in the report or a source.",
+    )
     citations: list[str] = Field(
-        default_factory=list,
         description=(
             "Chunk ids from the <source> blocks. If you report any non-empty fact, "
-            "this MUST contain at least one valid chunk id; leave it empty only when "
-            "the report contains no relevant fact."
-        ),
+            "this MUST contain at least one valid chunk id; use [] only when the report "
+            "contains no relevant fact."
+        )
     )
     notes: str = ""
 
@@ -59,14 +65,17 @@ class GroundPerception(LLMModel):
     mel_category: MelCategory | None = None
     deferrable: bool | None = None
     repair_min: int | None = None
-    confidence: float = 0.0
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="0..1. Use >= 0.6 when the extraction is grounded in the report or a source.",
+    )
     citations: list[str] = Field(
-        default_factory=list,
         description=(
             "Chunk ids from the <source> blocks. If you report any non-empty fact, "
-            "this MUST contain at least one valid chunk id; leave it empty only when "
-            "the report contains no relevant fact."
-        ),
+            "this MUST contain at least one valid chunk id; use [] only when the report "
+            "contains no relevant fact."
+        )
     )
     notes: str = ""
 

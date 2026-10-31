@@ -59,6 +59,8 @@ Transport = Callable[[dict[str, Any]], tuple[str, dict[str, Any]]]
 _BOUND_KEYS = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
 _SUBSCHEMA_MAPS = ("properties", "$defs", "definitions")
 _SUBSCHEMA_LISTS = ("anyOf", "oneOf", "allOf", "prefixItems")
+# String limits are rejected on a node that also carries anyOf (optional fields).
+_ANYOF_HOISTED = ("maxLength", "minLength", "pattern")
 
 
 def _fmt_bound(value: Any) -> str:
@@ -99,6 +101,13 @@ def _sanitize_node(node: Any) -> None:
         description = str(node.get("description") or "")
         if not _bounds_already_described(description, bounds):
             text = _bounds_text(bounds)
+            node["description"] = f"{description} {text}".strip() if description else text
+
+    if "anyOf" in node:
+        hoisted = {key: node.pop(key) for key in _ANYOF_HOISTED if key in node}
+        if hoisted:
+            text = "Limits: " + ", ".join(f"{k} {v}" for k, v in hoisted.items()) + "."
+            description = str(node.get("description") or "")
             node["description"] = f"{description} {text}".strip() if description else text
 
     if node.get("type") == "object" or "properties" in node:

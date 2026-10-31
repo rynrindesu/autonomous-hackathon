@@ -296,14 +296,26 @@ def _print_summary(record, event, resolution: Resolution, log: ConsensusLog, age
             verdict = "PASS" if p.get("passed") else f"BLOCKED [{failed}]"
             print(f"    {p.get('option_id', '-')}: {verdict} ({p.get('n_checks', 0)} checks)")
 
+    failed_roles = {
+        e.payload.get("role") for e in log.entries if e.event == "AGENT_FAILOVER"
+    }
+    degraded = len(failed_roles) >= 3
+    status = f"{resolution.status} (DEGRADED)" if degraded else resolution.status
+    if failed_roles:
+        print()
+        print(
+            f"  WARNING: {len(failed_roles)} agent(s) fell back to rule stubs"
+            f" ({', '.join(sorted(r for r in failed_roles if r))}) - this is NOT an LLM result"
+        )
+
     print()
     if resolution.option is None:
-        print(f"  RESULT {resolution.status}: {resolution.reason}")
+        print(f"  RESULT {status}: {resolution.reason}")
         return
     option = resolution.option
     costs = ", ".join(f"{role}=€{value:,.0f}" for role, value in resolution.costs_eur.items())
     print(
-        f"  RESULT {resolution.status} at turn {resolution.turn}: {option.option_id}"
+        f"  RESULT {status} at turn {resolution.turn}: {option.option_id}"
         f"  runway {option.runway}  arrival {fmt_hhmm(option.arrival_slot)}"
         f"  gate {option.gate}  next-leg {option.next_leg_action}"
     )

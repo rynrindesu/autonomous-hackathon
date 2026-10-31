@@ -24,7 +24,7 @@ from triad.agents.llm import (
 from triad.agents.perception import stub_perceive
 from triad.config import load_yaml
 from triad.coordinator.protocol import Orchestrator
-from triad.llm.client import LLMClient
+from triad.llm.client import DEFAULT_BASE_URL, LLMClient
 from triad.log.consensus_log import ConsensusLog, sha256_json
 from triad.schemas import AgentRole, CounterOption, fmt_hhmm
 
@@ -191,7 +191,9 @@ def _llm_atc_run(tmp_path, monkeypatch):
             },
         }
     )
-    client = LLMClient(model="m-test", api_key="k", cache_dir=tmp_path, transport=transport)
+    client = LLMClient(
+        base_url=DEFAULT_BASE_URL, model="m-test", api_key="k", cache_dir=tmp_path, transport=transport
+    )
     event = make_disruption_event()
     event.atc.notam_text = ["TWY A closed"]
     atc = LLMAgent(AgentRole.ATC, event.atc, load_yaml("agents/atc"), client=client)

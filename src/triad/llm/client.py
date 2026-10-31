@@ -53,6 +53,18 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _strip_code_fence(content: str) -> str:
+    """Remove a ```json ... ``` or ``` ... ``` wrapper if the model added one."""
+    text = content.strip()
+    if text.startswith("```") and text.endswith("```") and len(text) >= 6:
+        text = text[3:-3]
+        first, _, rest = text.partition("\n")
+        if first.strip().lower() in ("", "json"):
+            text = rest
+        return text.strip()
+    return content
+
+
 Transport = Callable[[dict[str, Any]], tuple[str, dict[str, Any]]]
 
 
@@ -125,7 +137,7 @@ class LLMClient:
             total_ms += ms
 
             try:
-                payload = json.loads(content)
+                payload = json.loads(_strip_code_fence(content))
                 model = out.model_validate(payload)
             except (json.JSONDecodeError, ValidationError, TypeError) as exc:
                 last_error = exc
@@ -158,23 +170,30 @@ class LLMClient:
     def _request(
         self, system: str, user: str, json_schema_format: dict[str, Any]
     ) -> tuple[str, dict[str, Any], float]:
-        """Call the transport, falling back to plain json_object on schema rejection."""
-        attempts = [
-            json_schema_format,
-            {"type": "json_object"},
-        ]
+        """Call the transport, falling back to plain json_object on schema rejection.
+
+        Anthropic's OpenAI-compatible endpoint only accepts strict json_schema
+        (which our schemas cannot express) and some models reject temperature,
+        so it gets a single plain request validated by Pydantic afterwards.
+        """
+        anthropic = "api.anthropic.com" in self.base_url
+        attempts: list[dict[str, Any] | None] = (
+            [None] if anthropic else [json_schema_format, {"type": "json_object"}]
+        )
         last_exc: Exception | None = None
         for index, response_format in enumerate(attempts):
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "model": self.model,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "temperature": 0,
-                "seed": 7,
-                "response_format": response_format,
             }
+            if not anthropic:
+                kwargs["temperature"] = 0
+                kwargs["seed"] = 7
+            if response_format is not None:
+                kwargs["response_format"] = response_format
             if self.max_tokens > 0:
                 kwargs["max_tokens"] = self.max_tokens
             started = time.perf_counter()

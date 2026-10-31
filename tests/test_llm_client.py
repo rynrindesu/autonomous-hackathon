@@ -5,7 +5,7 @@ import json
 import pytest
 from pydantic import BaseModel
 
-from triad.llm.client import LLMClient, LLMError
+from triad.llm.client import DEFAULT_BASE_URL, LLMClient, LLMError
 
 
 class Answer(BaseModel):
@@ -80,9 +80,29 @@ def test_falls_back_to_json_object_when_schema_is_rejected(tmp_path):
         return json.dumps({"answer": 3}), {"prompt_tokens": 1, "completion_tokens": 1}
 
     transport.calls = 0  # type: ignore[attr-defined]
-    client = LLMClient(model="m", api_key="k", cache_dir=tmp_path, transport=transport)
+    client = LLMClient(
+        base_url=DEFAULT_BASE_URL, model="m", api_key="k", cache_dir=tmp_path, transport=transport
+    )
 
     result, _usage = client.complete_json("sys", "user", Answer, name="answer")
 
     assert result.answer == 3
     assert transport.calls == 2  # type: ignore[attr-defined]
+
+
+def test_anthropic_endpoint_sends_plain_request_and_strips_code_fence(tmp_path):
+    transport, calls = scripted([('```json\n{"answer": 4}\n```', {"prompt_tokens": 1, "completion_tokens": 1})])
+    client = LLMClient(
+        base_url="https://api.anthropic.com/v1/",
+        model="m",
+        api_key="k",
+        cache_dir=tmp_path,
+        transport=transport,
+    )
+
+    result, _usage = client.complete_json("sys", "user", Answer, name="answer")
+
+    assert result.answer == 4
+    assert len(calls) == 1
+    for key in ("response_format", "temperature", "seed"):
+        assert key not in calls[0]

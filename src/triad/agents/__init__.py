@@ -36,8 +36,9 @@ def build_agents(
     clients_by_model: dict[str, object] = {}
     default_model = None
     if impl == "llm" and shared_client is None:
-        from triad.llm.client import DEFAULT_MODEL, LLMClient
+        from triad.llm.client import DEFAULT_MODEL, LLMClient, _load_env
 
+        _load_env()  # .env must be loaded before LLM_MODEL / LLM_MODEL_<ROLE> are read
         default_model = os.getenv("LLM_MODEL") or DEFAULT_MODEL
 
     def client_for(role: AgentRole):

@@ -1,7 +1,7 @@
 # Flight Dataset Schema
 2015 US domestic flights — airlines, airports, and flight records
 
-## 3tables
+## 3 tables
 
 358,774 flight records, 322 airports, 14 airlines
 

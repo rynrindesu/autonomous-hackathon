@@ -18,6 +18,8 @@ import hashlib
 import inspect
 import json
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -39,8 +41,11 @@ ROLE_SHORT = {"ATC": "ATC", "PILOT": "PILOT", "GROUND": "GROUND"}
 
 EVENT_ORDER = (
     "SETUP",
-    "OPTIONS_GENERATED",
     "SHARED_CHECKS",
+    "OPTIONS_GENERATED",
+    "AGENT_CHECKS",
+    "PERCEPTION",
+    "INJECTION_DETECTED",
     "PROPOSAL",
     "COUNTER_VALIDATED",
     "COUNTER_REJECTED",
@@ -50,6 +55,7 @@ EVENT_ORDER = (
     "AGENT_FAILOVER",
     "CONSENSUS_REACHED",
     "FALLBACK_INVOKED",
+    "COMMIT_GATE",
     "COMMIT",
     "ESCALATED",
 )
@@ -228,6 +234,52 @@ class RunData:
     record: dict[str, Any] | None = None
     checks_by_option: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     checks_by_role_option: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
+    # Richer log events (newer orchestrator). Empty for older runs.
+    log_flags: dict[str, Any] = field(default_factory=dict)
+    perceptions: dict[str, dict[str, Any]] = field(default_factory=dict)  # role -> {payload, usage}
+    injections: list[dict[str, Any]] = field(default_factory=list)  # log entries
+    commit_gates: list[dict[str, Any]] = field(default_factory=list)  # payloads, in order
+    agent_checks: dict[str, dict[str, Any]] = field(default_factory=dict)  # option_id -> payload
+    context_breakdown: dict[str, dict[str, str]] = field(default_factory=dict)  # "turn:role" -> shas
+    public_from_log: bool = False
+
+    # ------------------------------------------------------------------ format
+    @property
+    def has_rich_log(self) -> bool:
+        """True when the log carries SETUP.flags/public (newer orchestrator)."""
+        return bool(self.log_flags) or self.public_from_log
+
+    @property
+    def red_team(self) -> bool:
+        if "red_team" in self.log_flags:
+            return bool(self.log_flags.get("red_team"))
+        return "redteam" in self.run_dir.name.lower()
+
+    @property
+    def ai_off(self) -> bool:
+        if "ai_off" in self.log_flags:
+            return bool(self.log_flags.get("ai_off"))
+        return "aioff" in self.run_dir.name.lower()
+
+    @property
+    def defect_id(self) -> str | None:
+        value = self.log_flags.get("defect_id")
+        return str(value) if value else None
+
+    @property
+    def agent_impl(self) -> dict[str, str]:
+        impls = self.log_flags.get("agent_impl") or self.manifest.get("agent_impl") or {}
+        return {str(k): str(v) for k, v in impls.items()} if isinstance(impls, dict) else {}
+
+    @property
+    def commit_gate(self) -> dict[str, Any] | None:
+        """The gate that let the committed option through (or the last gate seen)."""
+        if not self.commit_gates:
+            return None
+        for gate in reversed(self.commit_gates):
+            if gate.get("passed") and gate.get("option_id") == self.committed_id:
+                return gate
+        return self.commit_gates[-1]
 
     # ------------------------------------------------------------------ basics
     @property
@@ -313,10 +365,19 @@ class RunData:
         return int(value) if value is not None else None
 
     @property
+    def dataset_row(self) -> int | None:
+        row = self.manifest.get("dataset_row")
+        if row is None:
+            row = self.flight.get("row_index")
+        try:
+            return int(row) if row is not None else None
+        except Exception:
+            return None
+
+    @property
     def scenario(self) -> tuple[str, dict[str, Any]] | None:
         try:
-            row = self.manifest.get("dataset_row")
-            return scenario_for_row(int(row)) if row is not None else None
+            return scenario_for_row(self.dataset_row)
         except Exception:
             return None
 
@@ -326,17 +387,16 @@ class RunData:
 
     @property
     def flags(self) -> list[str]:
-        name = self.run_dir.name.lower()
         flags: list[str] = []
-        if "-redteam" in name or "redteam" in name:
+        if self.red_team:
             flags.append("Red-team")
-        if "-aioff" in name or "aioff" in name:
+        if self.ai_off:
             flags.append("AI off")
         return flags
 
     @property
     def impl_label(self) -> str:
-        impls = list(dict.fromkeys(str(v) for v in self.manifest.get("agent_impl", {}).values()))
+        impls = list(dict.fromkeys(self.agent_impl.values()))
         if not impls:
             return "unknown"
         if len(impls) == 1:
@@ -429,7 +489,12 @@ class RunData:
     def state(self, option_id: str) -> str:
         if option_id == self.committed_id:
             return "committed"
-        if "AI off" in self.flags and self.safe_pool:
+        if self.ai_off and self.agent_checks:
+            if option_id not in self.agent_checks:
+                # Never reached the agent checkers: failed a shared check.
+                return "vetoed" if self.code_failures(option_id) else "feasible"
+            return "feasible" if self.agent_checks[option_id].get("passed") else "vetoed"
+        if self.ai_off and self.safe_pool:
             return "feasible" if option_id in self.safe_pool else "vetoed"
         if option_id in self.rejected_counter_ids:
             return "rejected"
@@ -438,6 +503,23 @@ class RunData:
         if self.code_failures(option_id):
             return "vetoed"
         return "feasible"
+
+    def exclusion(self, option_id: str) -> dict[str, list[str]]:
+        """Failing constraint ids per owner (SHARED / ATC / PILOT / GROUND) for one option."""
+        out: dict[str, list[str]] = {}
+        payload = self.agent_checks.get(option_id)
+        if payload:
+            for role, item in (payload.get("agents") or {}).items():
+                ids = [str(v) for v in (item or {}).get("failed_constraint_ids") or []]
+                if ids:
+                    out[str(role)] = ids
+        for check in self.code_failures(option_id):
+            owner = str(check.get("owner") or "SHARED")
+            cid = str(check.get("constraint_id") or "?")
+            bucket = out.setdefault(owner, [])
+            if cid not in bucket:
+                bucket.append(cid)
+        return out
 
     def state_label(self, option_id: str) -> str:
         return STATE_LABELS.get(self.state(option_id), self.state(option_id).title())
@@ -516,8 +598,13 @@ class RunData:
     def context_hash(self, turn: int, role: str) -> str | None:
         return self.context_manifests.get(f"{turn}:{role}")
 
+    def context_parts(self, turn: int, role: str) -> dict[str, str]:
+        """{public_sha, private_sha} for what ``role`` saw in ``turn`` (newer logs only)."""
+        return self.context_breakdown.get(f"{turn}:{role}", {})
+
     @property
     def usage_rows(self) -> list[dict[str, Any]]:
+        steps = {"PERCEPTION": "Perceive", "PROPOSAL": "Turn 1", "BALLOT": "Turn 2"}
         rows: list[dict[str, Any]] = []
         for entry in self.raw_entries:
             usage = entry.get("usage")
@@ -530,11 +617,29 @@ class RunData:
                     {
                         "seq": entry.get("seq"),
                         "turn": entry.get("turn"),
+                        "event": entry.get("event"),
+                        "step": steps.get(str(entry.get("event")), str(entry.get("event") or "")),
                         "role": role,
                         **data,
                     }
                 )
         return rows
+
+    def usage_for(self, role: str, event: str) -> dict[str, Any] | None:
+        for entry in self.raw_entries:
+            if entry.get("event") != event:
+                continue
+            usage = entry.get("usage")
+            if isinstance(usage, dict) and isinstance(usage.get(role), dict):
+                return usage[role]
+        return None
+
+    def injections_for(self, role: str) -> list[dict[str, Any]]:
+        return [
+            e
+            for e in self.injections
+            if str(_as_dict(e.get("payload")).get("agent") or e.get("actor")) == role
+        ]
 
     @property
     def integration_entries(self) -> list[dict[str, Any]]:
@@ -580,6 +685,15 @@ def _collect_checks(run: RunData) -> None:
             payload = entry.get("payload") or {}
             add(str(payload.get("option_id")), payload.get("failing_checks") or [])
 
+    # AI-off runs: every agent's checker on every option (newer logs).
+    for option_id, payload in run.agent_checks.items():
+        by_owner: dict[str, list[dict[str, Any]]] = {}
+        for check in payload.get("checks") or []:
+            if isinstance(check, dict):
+                by_owner.setdefault(str(check.get("owner") or "SHARED"), []).append(check)
+        for owner, items in by_owner.items():
+            add(option_id, items, owner if owner in ROLES else None)
+
     if run.committed_id:
         add(run.committed_id, run.final_checks)
 
@@ -602,6 +716,30 @@ def _build_counters(run: RunData, by_option: dict[str, dict[str, Any]]) -> None:
         if not isinstance(counter, dict):
             continue
         base_id = str(counter.get("base_option_id") or "")
+        changes = _as_dict(counter.get("changes"))
+        # Newer logs carry the fully materialised option; use it as-is.
+        logged = next(
+            (
+                (oid, payload)
+                for oid, payload in {**validated, **rejected}.items()
+                if payload.get("role") == role and isinstance(payload.get("option"), dict)
+            ),
+            None,
+        )
+        if logged is not None:
+            option_id, payload = logged
+            run.counters.append(
+                {
+                    "role": role,
+                    "option": dict(payload["option"]),
+                    "base_option_id": str(payload.get("base_option_id") or base_id),
+                    "changes": changes,
+                    "status": "validated" if option_id in validated else "rejected",
+                    "event": payload,
+                    "from_log": True,
+                }
+            )
+            continue
         base = by_option.get(base_id)
         if base is None:
             run.counter_errors.append(
@@ -651,19 +789,40 @@ def _collect(srun: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return value if isinstance(value, list) else []
 
 
-def load_run(run_dir: str | Path) -> RunData:
-    path = Path(run_dir)
+def _read_log_entries(path: Path) -> list[dict[str, Any]]:
+    """Parse ``log.jsonl``; skips unparsable lines (e.g. a half-written last line)."""
     entries: list[dict[str, Any]] = []
     try:
-        with (path / "log.jsonl").open(encoding="utf-8") as handle:
+        with path.open(encoding="utf-8") as handle:
             for line in handle:
-                if line.strip():
-                    entries.append(json.loads(line))
-    except Exception:
-        entries = []
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict):
+                    entries.append(entry)
+    except OSError:
+        return []
+    return entries
 
-    resolution = _read_json(path / "resolution.json", {})
-    manifest = _read_json(path / "manifest.json", {})
+
+def load_run(run_dir: str | Path, *, live: bool = False) -> RunData:
+    """Build a RunData from a run folder.
+
+    Works on a folder that only has ``log.jsonl`` (resolution/manifest missing).
+    ``live=True`` ignores ``resolution.json`` and ``manifest.json`` entirely, because
+    while a run is in progress those files may be stale leftovers of an earlier run
+    in the same folder. Without a resolution, ``status`` is ``"UNKNOWN"``, ``turn``
+    is 0 and ``committed_option`` is None; the ``commit``/``fallback`` log payloads
+    still reflect whatever the log contains so far.
+    """
+    path = Path(run_dir)
+    entries = _read_log_entries(path / "log.jsonl")
+
+    resolution = {} if live else _read_json(path / "resolution.json", {})
+    manifest = {} if live else _read_json(path / "manifest.json", {})
     if not isinstance(resolution, dict):
         resolution = {}
     if not isinstance(manifest, dict):
@@ -683,12 +842,37 @@ def load_run(run_dir: str | Path) -> RunData:
     fallback: dict[str, Any] | None = None
     commit: dict[str, Any] | None = None
     context_manifests: dict[str, str] = {}
+    context_breakdown: dict[str, dict[str, str]] = {}
+    perceptions: dict[str, dict[str, Any]] = {}
+    injections: list[dict[str, Any]] = []
+    commit_gates: list[dict[str, Any]] = []
+    agent_checks: dict[str, dict[str, Any]] = {}
 
     for entry in entries:
         event = entry.get("event")
         payload = _as_dict(entry.get("payload"))
+        if event in ("PROPOSAL", "BALLOT"):
+            for role, parts in _as_dict(payload.get("context")).items():
+                if isinstance(parts, dict):
+                    context_breakdown[f"{entry.get('turn', 0)}:{role}"] = {
+                        "public_sha": str(parts.get("public_sha") or ""),
+                        "private_sha": str(parts.get("private_sha") or ""),
+                    }
         if event == "SETUP":
             setup = payload
+        elif event == "PERCEPTION":
+            role = str(payload.get("role") or entry.get("actor") or "")
+            if role:
+                usage = _as_dict(entry.get("usage")).get(role)
+                perceptions[role] = {"payload": payload, "usage": usage if isinstance(usage, dict) else None}
+        elif event == "INJECTION_DETECTED":
+            injections.append(entry)
+        elif event == "COMMIT_GATE":
+            commit_gates.append(payload)
+        elif event == "AGENT_CHECKS":
+            oid = str(payload.get("option_id") or "")
+            if oid:
+                agent_checks[oid] = payload
         elif event == "OPTIONS_GENERATED":
             options = _collect(payload, "options")
             generated_ids = [str(v) for v in _collect(payload, "option_ids")]
@@ -722,10 +906,18 @@ def load_run(run_dir: str | Path) -> RunData:
             for role, digest in manifest_hashes.items():
                 context_manifests[f"{entry.get('turn', 0)}:{role}"] = str(digest)
 
-    row = manifest.get("dataset_row")
-    seed = manifest.get("seed", 0)
-    public = _public_event(int(row), int(seed)) if row is not None else None
-    record = _record_dict(int(row)) if row is not None else None
+    log_flags = _as_dict(setup.get("flags"))
+    logged_public = _as_dict(setup.get("public"))
+    if logged_public:
+        # Newer logs: the exact PublicEvent the orchestrator saw. No rebuild needed.
+        public: dict[str, Any] | None = logged_public
+        record = _as_dict(logged_public.get("flight")) or None
+    else:
+        # Older logs: rebuild the deterministic public event from manifest row + seed.
+        row = manifest.get("dataset_row")
+        seed = manifest.get("seed", log_flags.get("seed") or 0)
+        public = _public_event(int(row), int(seed or 0)) if row is not None else None
+        record = _record_dict(int(row)) if row is not None else None
 
     run = RunData(
         run_dir=path,
@@ -750,6 +942,13 @@ def load_run(run_dir: str | Path) -> RunData:
         record=record,
         chain_ok=verify_chain(path / "log.jsonl"),
         log_sha=log_sha256(path / "log.jsonl"),
+        log_flags=log_flags,
+        perceptions=perceptions,
+        injections=injections,
+        commit_gates=commit_gates,
+        agent_checks=agent_checks,
+        context_breakdown=context_breakdown,
+        public_from_log=bool(logged_public),
     )
 
     _build_counters(run, {str(o.get("option_id")): o for o in options})
@@ -778,24 +977,57 @@ def _peek(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
+def _peek_setup(path: Path) -> dict[str, Any]:
+    """SETUP payload from the first log line; {} if unreadable."""
+    try:
+        with (path / "log.jsonl").open(encoding="utf-8") as handle:
+            first = json.loads(handle.readline() or "{}")
+        if first.get("event") == "SETUP":
+            return _as_dict(first.get("payload"))
+    except Exception:
+        pass
+    return {}
+
+
+def _peek_flags(path: Path) -> dict[str, Any]:
+    """SETUP.flags (newer logs); {} for older runs."""
+    return _as_dict(_peek_setup(path).get("flags"))
+
+
 def run_label(path: Path) -> str:
     manifest, resolution = _peek(path)
     row = manifest.get("dataset_row")
     scenario = scenario_for_row(int(row)) if row is not None else None
     name = scenario[0] if scenario else (f"row {row}" if row is not None else path.name)
-    match = re.match(r"^\d{4}-\d{2}-\d{2}-([A-Z0-9]+)-r\d+", path.name)
-    flight = match.group(1) if match else ""
+    setup = _peek_setup(path)
+    logged_flight = _as_dict(_as_dict(setup.get("public")).get("flight"))
+    if logged_flight.get("airline"):
+        flight = f"{logged_flight.get('airline')}{logged_flight.get('flight_number', '')}"
+        if row is None:
+            row = logged_flight.get("row_index")
+            scenario = scenario_for_row(int(row)) if row is not None else None
+            name = scenario[0] if scenario else (f"row {row}" if row is not None else path.name)
+    else:
+        match = re.match(r"^\d{4}-\d{2}-\d{2}-([A-Z0-9]+)-r\d+", path.name)
+        flight = match.group(1) if match else ""
     status = str(resolution.get("status") or "?")
     turn = resolution.get("turn", "?")
     flags: list[str] = []
     lowered = path.name.lower()
-    if "redteam" in lowered:
+    log_flags = _as_dict(setup.get("flags"))
+    red_team = log_flags["red_team"] if "red_team" in log_flags else "redteam" in lowered
+    ai_off = log_flags["ai_off"] if "ai_off" in log_flags else "aioff" in lowered
+    if red_team:
         flags.append("red-team")
-    if "aioff" in lowered:
+    if ai_off:
         flags.append("AI off")
-    impl_values = " ".join(str(v).lower() for v in (manifest.get("agent_impl") or {}).values())
-    if "llm" in impl_values or "-llm" in lowered:
+    impl_values = " ".join(
+        str(v).lower() for v in (log_flags.get("agent_impl") or manifest.get("agent_impl") or {}).values()
+    )
+    if "llm" in impl_values or (not log_flags and "-llm" in lowered):
         flags.append("LLM")
+    if log_flags.get("defect_id"):
+        flags.append(str(log_flags["defect_id"]))
     parts = [name]
     if flight:
         parts.append(flight)
@@ -854,6 +1086,33 @@ def _suffix(*, ai_off: bool, red_team: bool, impl: str, defect_tag: str | None) 
     return suffix
 
 
+def _runner_accepts(name: str) -> bool:
+    from triad.runner import run_scenario
+
+    return name in inspect.signature(run_scenario).parameters
+
+
+def _run_dir_for(run_id: str, *, ai_off: bool, red_team: bool, impl: str, defect_tag: str | None) -> Path:
+    return RUNS_DIR / f"{run_id}{_suffix(ai_off=ai_off, red_team=red_team, impl=impl, defect_tag=defect_tag)}"
+
+
+def _primary_run_dir(
+    row_index: int,
+    ai_off: bool,
+    red_team: bool,
+    impl: str,
+    defect_tag: str | None,
+) -> Path:
+    """Folder run_negotiation writes to first (before any LLM -> stub fallback)."""
+    from triad.data.loader import get_record
+
+    record = get_record(int(row_index))
+    actual_impl = impl if _runner_accepts("impl") else "stub"
+    return _run_dir_for(
+        record.run_id, ai_off=ai_off, red_team=red_team, impl=actual_impl, defect_tag=defect_tag
+    )
+
+
 def run_negotiation(
     *,
     row_index: int,
@@ -889,10 +1148,9 @@ def run_negotiation(
     notices: list[str] = []
 
     def _execute(current_impl: str) -> tuple[Any, Any, Path, str]:
-        suffix = _suffix(
-            ai_off=ai_off, red_team=red_team, impl=current_impl, defect_tag=defect_tag
+        target = _run_dir_for(
+            record.run_id, ai_off=ai_off, red_team=red_team, impl=current_impl, defect_tag=defect_tag
         )
-        target = RUNS_DIR / f"{record.run_id}{suffix}"
         kwargs: dict[str, Any] = {
             "seed": int(seed),
             "defect_id": defect_id,
@@ -964,3 +1222,160 @@ def run_negotiation(
     write_manifest(manifest, run_dir)
     write_resolution(resolution, run_dir)
     return run_dir, notice
+
+
+# --------------------------------------------------------------------------- live playback
+
+
+@dataclass
+class LiveNegotiation:
+    """A negotiation running in a background thread.
+
+    ``path`` is the primary run folder, known before the run starts; poll it with
+    ``live_status(path, since=started_at)`` (or ``status()``). ``result_path`` /
+    ``notice`` / ``error`` are set once by the worker when it finishes. ``result_path``
+    can differ from ``path`` when the LLM agents fail and the stub run lands in the
+    stub-suffixed folder.
+    """
+
+    path: Path
+    thread: threading.Thread | None = None
+    result_path: Path | None = None
+    notice: str | None = None
+    error: str | None = None
+    started_at: float = field(default_factory=time.time)
+
+    def is_alive(self) -> bool:
+        return self.thread is not None and self.thread.is_alive()
+
+    def status(self) -> dict[str, Any]:
+        return live_status(self.path, since=self.started_at)
+
+
+def start_live_negotiation(
+    *,
+    row_index: int,
+    seed: int = 0,
+    defect_id: str | None = None,
+    ai_off: bool = False,
+    red_team: bool = False,
+    impl: str = "stub",
+    use_cache: bool = True,
+    defect_tag: str | None = None,
+) -> LiveNegotiation:
+    """Start ``run_negotiation`` in a daemon thread and return a handle to poll."""
+
+    live = LiveNegotiation(
+        path=_primary_run_dir(row_index, ai_off, red_team, impl, defect_tag),
+        started_at=time.time(),
+    )
+
+    def _worker() -> None:
+        try:
+            result_path, notice = run_negotiation(
+                row_index=row_index,
+                seed=seed,
+                defect_id=defect_id,
+                ai_off=ai_off,
+                red_team=red_team,
+                impl=impl,
+                use_cache=use_cache,
+                defect_tag=defect_tag,
+            )
+            live.notice = notice
+            live.result_path = Path(result_path)
+        except BaseException as exc:  # noqa: BLE001 - surfaced to the UI
+            live.error = str(exc) or exc.__class__.__name__
+
+    live.thread = threading.Thread(target=_worker, name="triad-live-negotiation", daemon=True)
+    live.thread.start()
+    return live
+
+
+def live_status(path: Path, *, since: float | None = None) -> dict[str, Any]:
+    """Progress of a (possibly running) negotiation, derived only from ``log.jsonl``.
+
+    ``resolution.json`` is deliberately ignored: it may be stale. Pass ``since``
+    (epoch seconds when the run was started) to treat a log that has not been
+    rewritten since then as a stale leftover ("waiting"); the runner only truncates
+    log.jsonl after agent setup/perception prefetch, which can take a while.
+    """
+
+    status: dict[str, Any] = {
+        "phase": "waiting",
+        "turn": 0,
+        "proposals_received": [],
+        "ballots_received": [],
+        "done": False,
+        "outcome": None,
+        "entries": 0,
+    }
+    log_path = Path(path) / "log.jsonl"
+    if since is not None:
+        try:
+            if log_path.stat().st_mtime < since:
+                return status
+        except OSError:
+            return status
+    entries = _read_log_entries(log_path)
+    status["entries"] = len(entries)
+    if not entries:
+        return status
+
+    phase = "setup"
+    turn = 0
+    proposals: list[str] = []
+    ballots: list[str] = []
+    fallback = False
+    outcome: str | None = None
+    done = False
+    for entry in entries:
+        event = entry.get("event")
+        payload = _as_dict(entry.get("payload"))
+        role = str(payload.get("sender") or entry.get("actor") or "")
+        if event == "TURN_START":
+            try:
+                turn = int(payload.get("turn") or entry.get("turn") or turn)
+            except (TypeError, ValueError):
+                pass
+            phase = f"turn{turn}"
+            if turn >= 2:
+                ballots = []
+        elif event == "PROPOSAL":
+            turn = max(turn, 1)
+            phase = "turn1"
+            if role and role not in proposals:
+                proposals.append(role)
+        elif event == "BALLOT":
+            try:
+                turn = max(turn, int(entry.get("turn") or 2))
+            except (TypeError, ValueError):
+                turn = max(turn, 2)
+            phase = f"turn{turn}"
+            if role and role not in ballots:
+                ballots.append(role)
+        elif event == "FALLBACK_INVOKED":
+            fallback = True
+            phase = "fallback"
+        elif event == "COMMIT_GATE":
+            if not fallback:
+                phase = "commit"
+        elif event == "COMMIT":
+            done = True
+            phase = "done"
+            fallback = fallback or str(payload.get("status") or "") == "FALLBACK"
+            outcome = "fallback" if fallback else "committed"
+        elif event == "ESCALATED":
+            done = True
+            phase = "done"
+            outcome = "escalated"
+
+    status.update(
+        phase=phase,
+        turn=turn,
+        proposals_received=proposals,
+        ballots_received=ballots,
+        done=done,
+        outcome=outcome,
+    )
+    return status

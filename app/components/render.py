@@ -31,6 +31,7 @@ from .format import (
     option_next_leg,
     safety_detail_label,
     short_hash,
+    split_rationale,
 )
 
 
@@ -142,6 +143,8 @@ def side_meta_html(run: RunData) -> str:
     if run.turn:
         tags.append(f"T{run.turn}")
     tags.extend(run.flags)
+    if run.defect_id:
+        tags.append(run.defect_id)
     tags.append(run.impl_label)
     return '<div class="td-side-meta">' + "".join(
         f'<span class="td-side-tag">{h(tag)}</span>' for tag in tags
@@ -197,6 +200,8 @@ def hero_html(run: RunData) -> str:
     run_tags.append(badge(run.impl_label, "grey"))
     for flag in run.flags:
         run_tags.append(badge(flag, "amber"))
+    if run.defect_id:
+        run_tags.append(badge(f"defect {run.defect_id}", "grey", "Forced defect from config/defects.yaml"))
 
     def metric(label: str, value: str, sub: str, kind: str, title: str) -> str:
         return (
@@ -281,6 +286,11 @@ def status_strip_html(run: RunData) -> str:
         committed_sub = "no option committed"
     safety_n = len(run.safety_blocks)
     safety_sub = "orchestrator guards" if safety_n else "no blocks raised"
+    if run.injections:
+        n_inj = len(run.injections)
+        safety_sub = f"{n_inj} injection{'s' if n_inj != 1 else ''} resisted · " + (
+            "outputs blocked" if safety_n else "no blocks"
+        )
     chain_value = "VERIFIED" if run.chain_ok else "BROKEN"
     chain_sub = f"{len(run.raw_entries)} log entries"
     return (
@@ -364,7 +374,7 @@ def flow_html(run: RunData) -> str:
 def topology_html(run: RunData) -> str:
     spokes: list[str] = []
     for role in ROLES:
-        impl = str((run.manifest.get("agent_impl") or {}).get(role, "—"))
+        impl = run.agent_impl.get(role, "—")
         proposal = run.proposals.get(role)
         ballot = run.ballots.get(role)
         if proposal:
@@ -380,6 +390,17 @@ def topology_html(run: RunData) -> str:
             vote_text = "not called"
         else:
             vote_text = "no ballot"
+        mark_items: list[str] = []
+        if run.injections_for(role):
+            mark_items.append('<span class="td-inject-tag">injection resisted</span>')
+        if is_compromised(run, role):
+            mark_items.append('<span class="td-compromised-tag">compromised</span>')
+        blocks = sum(
+            1 for e in run.safety_blocks if (e.get("payload") or {}).get("agent") == role
+        )
+        if blocks:
+            mark_items.append(f'<span class="td-block-tag">{blocks} blocked</span>')
+        marks = f'<div class="td-spoke-marks">{"".join(mark_items)}</div>' if mark_items else ""
         spokes.append(
             f'<div class="td-spoke {role_class(role)}">'
             '<div class="td-spoke-top">'
@@ -388,7 +409,8 @@ def topology_html(run: RunData) -> str:
             "</div>"
             f'<div class="td-spoke-meta">T1 top {h(top)}</div>'
             f'<div class="td-spoke-sub">{h(vote_text)}</div>'
-            "</div>"
+            + marks
+            + "</div>"
         )
     return (
         '<div class="td-hub-band">'
@@ -429,6 +451,115 @@ def _agent_head(role: str, msg_type: str, ghost: bool = False) -> str:
         f'<div class="td-msg-type">{h(msg_type)}</div>'
         "</div>"
     )
+
+
+def rationale_html(text: Any) -> str:
+    """Agent prose, with machine-added suffix tags rendered as chips / warning tags."""
+    parts = split_rationale(text)
+    body = parts["body"] or ""
+    html_out = f'<div class="td-rationale">{h(pretty_rationale(body))}</div>'
+    tags: list[str] = []
+    for value in parts["compromised"]:
+        tags.append(
+            f'<div class="td-compromised"><span class="td-compromised-tag">Compromised agent</span>'
+            f'<span>{h(value)}</span></div>'
+        )
+    chip_row: list[str] = []
+    for oid in parts["approves"]:
+        chip_row.append(_chip(f"<b>approves</b> {h(oid)}", "td-chip-good"))
+    for oid in parts["llm_approved"]:
+        chip_row.append(
+            _chip(
+                f"<b>model chose</b> {h(oid)}",
+                "td-chip-muted",
+                "What the language model voted before the red-team harness replaced the ballot",
+            )
+        )
+    for note in parts["notes"]:
+        chip_row.append(_chip(h(note), ""))
+    if chip_row:
+        tags.append('<div class="td-tag-row">' + "".join(chip_row) + "</div>")
+    if parts["reasons"]:
+        tags.append(f'<div class="td-reasons"><b>Reasons</b> {h(parts["reasons"])}</div>')
+    return html_out + "".join(tags)
+
+
+def is_compromised(run: RunData, role: str) -> bool:
+    for payload in (run.proposals.get(role), run.ballots.get(role)):
+        if payload and split_rationale(payload.get("rationale"))["compromised"]:
+            return True
+    return False
+
+
+def usage_line_html(usage: dict[str, Any] | None, label: str = "") -> str:
+    """One-line model call summary: step · model · tokens · latency · cached / repaired."""
+    if not usage:
+        return ""
+    bits = ([f"<b>{h(label)}</b>"] if label else []) + [h(usage.get("model") or "model")]
+    tokens = (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+    if tokens:
+        bits.append(f"{fmt_num(tokens)} tok")
+    if usage.get("cached"):
+        bits.append('<span class="td-usage-cached">cached replay</span>')
+    else:
+        try:
+            bits.append(f"{float(usage.get('ms') or 0) / 1000:.1f} s")
+        except Exception:
+            pass
+    if usage.get("repaired"):
+        bits.append('<span class="td-usage-repaired">repaired</span>')
+    return '<div class="td-usage-line">' + " · ".join(bits) + "</div>"
+
+
+def _fact_rows(facts: list[dict[str, Any]], *, citation_key: str) -> list[str]:
+    rows: list[str] = []
+    for fact in facts:
+        if not isinstance(fact, dict):
+            continue
+        key = str(fact.get("key") or "fact")
+        value = fmt_fact_value(key, fact.get("value"))
+        meta = [f"confidence {fmt_pct(fact.get('confidence'))}"] if fact.get("confidence") is not None else []
+        citation = fact.get(citation_key)
+        if isinstance(citation, dict):
+            citation = citation.get("chunk_id")
+        meta.append(f"cite {citation}" if citation else "no citation")
+        rows.append(
+            f'<tr class="{"td-fact-default" if fact.get("conservative_default") else ""}">'
+            f'<td class="k">{h(key)}{source_badge(fact)}</td>'
+            f'<td>{h(value)}<div class="td-top-value">{h(" · ".join(meta))}</div></td></tr>'
+        )
+    return rows
+
+
+def perception_block_html(run: RunData, role: str, fallback_facts: list[dict[str, Any]]) -> str:
+    """Perceived facts: from the PERCEPTION event when logged, else from the proposal."""
+    perception = run.perceptions.get(role)
+    if perception:
+        payload = perception.get("payload") or {}
+        facts = [f for f in payload.get("facts") or [] if isinstance(f, dict)]
+        rows = _fact_rows(facts, citation_key="citation")
+        defaults = int(payload.get("n_conservative_defaults") or 0)
+        aside = f"{len(rows)}" + (f" · {defaults} default" if defaults else "")
+        out = _minihead("Perceived facts", aside)
+        if payload.get("failover"):
+            out += '<div class="td-reasons"><b>Failover</b> agent replaced by its stub; conservative perception.</div>'
+        out += ('<table class="td-facts">' + "".join(rows) + "</table>") if rows else '<div class="td-empty">No facts perceived.</div>'
+        out += usage_line_html(perception.get("usage"), "perceive call")
+    elif fallback_facts:
+        rows = _fact_rows(fallback_facts, citation_key="citation")
+        out = _minihead("Perceived facts", f"{len(rows)}") + '<table class="td-facts">' + "".join(rows) + "</table>"
+    else:
+        return ""
+    for entry in run.injections_for(role):
+        payload = entry.get("payload") or {}
+        phrases = ", ".join(str(p) for p in payload.get("phrases") or [])
+        out += (
+            '<div class="td-inject-flag">'
+            '<span class="td-inject-tag">Injection in input</span>'
+            f'<span>treated as data · matched: {h(phrases)}</span>'
+            "</div>"
+        )
+    return out
 
 
 def proposal_card_html(run: RunData, role: str) -> str:
@@ -490,23 +621,7 @@ def proposal_card_html(run: RunData, role: str) -> str:
     else:
         counter_html = ""
 
-    if facts:
-        fact_rows = []
-        for fact in facts:
-            if not isinstance(fact, dict):
-                continue
-            key = str(fact.get("key") or "fact")
-            value = fmt_fact_value(key, fact.get("value"))
-            confidence = fmt_pct(fact.get("confidence"))
-            fact_rows.append(
-                f'<tr><td class="k">{h(key)}{source_badge(fact)}</td>'
-                f'<td>{h(value)}<div class="td-top-value">confidence {h(confidence)}</div></td></tr>'
-            )
-        facts_html = _minihead("Perceived facts", f"{len(fact_rows)}") + (
-            '<table class="td-facts">' + "".join(fact_rows) + "</table>"
-        )
-    else:
-        facts_html = ""
+    facts_html = perception_block_html(run, role, [f for f in facts if isinstance(f, dict)])
 
     if citations:
         cite_html = _minihead("Citations", f"{len(citations)}") + '<div class="td-citations">' + "".join(
@@ -520,8 +635,14 @@ def proposal_card_html(run: RunData, role: str) -> str:
     else:
         cite_html = _minihead("Citations") + '<div class="td-empty">No citations recorded.</div>'
 
+    compromised = (
+        '<div class="td-compromised-banner">Compromised agent · output checked by code</div>'
+        if is_compromised(run, role)
+        else ""
+    )
     return (
         _agent_head(role, "Turn 1 · Propose")
+        + compromised
         + '<div class="td-top-choice">'
         "<div>"
         '<div class="td-top-label">Top choice</div>'
@@ -535,7 +656,8 @@ def proposal_card_html(run: RunData, role: str) -> str:
         + _minihead("Objections", f"{len(objections)}")
         + f'<div>{objection_html}</div>'
         + counter_html
-        + f'<div class="td-rationale">{h(pretty_rationale(proposal.get("rationale")))}</div>'
+        + rationale_html(proposal.get("rationale"))
+        + usage_line_html(run.usage_for(role, "PROPOSAL"), "turn 1 call")
         + facts_html
         + cite_html
         + "</div>"
@@ -584,8 +706,14 @@ def ballot_card_html(run: RunData, role: str) -> str:
         )
 
     top = ranking[0] if ranking else "no approval"
+    compromised = (
+        '<div class="td-compromised-banner">Compromised agent · ballot replaced</div>'
+        if split_rationale(ballot.get("rationale"))["compromised"]
+        else ""
+    )
     return (
         _agent_head(role, "Turn 2 · Ballot")
+        + compromised
         + '<div class="td-top-choice">'
         "<div>"
         '<div class="td-top-label">Approved first</div>'
@@ -596,7 +724,8 @@ def ballot_card_html(run: RunData, role: str) -> str:
         "</div>"
         + _minihead("Votes", f"{len(votes)}")
         + ('<div>' + "".join(rows) + "</div>" if rows else '<div class="td-empty">No votes recorded.</div>')
-        + f'<div class="td-rationale">{h(pretty_rationale(ballot.get("rationale")))}</div>'
+        + rationale_html(ballot.get("rationale"))
+        + usage_line_html(run.usage_for(role, "BALLOT"), "turn 2 call")
         + cite_html
         + "</div>"
     )
@@ -749,6 +878,53 @@ def options_table_html(run: RunData) -> str:
     )
     return table
 
+def exclusion_matrix_html(run: RunData) -> str:
+    """AI-off runs: every agent's code checker on every option (AGENT_CHECKS events)."""
+    if not run.agent_checks:
+        return ""
+    owners = ["SHARED", *ROLES]
+    head = "".join(
+        f"<th>{h('Shared' if o == 'SHARED' else ROLE_NAMES.get(o, o))}</th>" for o in owners
+    )
+    rows: list[str] = []
+    for option in run.options:
+        oid = str(option.get("option_id") or "")
+        if not oid:
+            continue
+        excl = run.exclusion(oid)
+        state = run.state(oid)
+        cells = []
+        for owner in owners:
+            ids = excl.get(owner) or []
+            if owner != "SHARED" and oid not in run.agent_checks:
+                cells.append('<td class="td-x-skip">not checked</td>')
+            elif ids:
+                cells.append(
+                    '<td class="td-x-fail">' + "".join(_chip(h(cid), "td-chip-veto") for cid in ids) + "</td>"
+                )
+            else:
+                cells.append('<td class="td-x-pass">pass</td>')
+        if state == "committed":
+            result = badge("committed", "green")
+        elif state == "feasible":
+            result = badge("safe pool", "blue")
+        else:
+            n = sum(1 for o in ROLES if excl.get(o))
+            result = badge(f"excluded · {n or 'shared'} {'agent' if n == 1 else 'agents' if n else ''}".strip(), "red")
+        rows.append(
+            f'<tr class="{state if state in ("committed", "vetoed") else "feasible"}">'
+            f'<td><span class="td-opt-id">{h(oid)}</span></td>'
+            + "".join(cells)
+            + f"<td>{result}</td></tr>"
+        )
+    return (
+        '<div class="td-table-wrap"><table class="td-table td-xmatrix">'
+        f"<thead><tr><th>Option</th>{head}<th>Result</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table></div>"
+    )
+
+
 def options_summary_html(run: RunData) -> str:
     committed = "1 committed" if run.committed_id else "no commit"
     counters = [c for c in run.counters]
@@ -899,25 +1075,48 @@ def checks_table_html(
     )
 
 
+def _gate_numbers(run: RunData) -> tuple[bool, int, list[dict[str, Any]], str]:
+    """(passed, n_checks, failed, source) — from COMMIT_GATE when logged, else the resolution."""
+    gate = run.commit_gate
+    if gate is not None:
+        failed = [f for f in gate.get("failed") or [] if isinstance(f, dict)]
+        return bool(gate.get("passed")), int(gate.get("n_checks") or 0), failed, "COMMIT_GATE event"
+    return run.commit_safe, len(run.final_checks), run.commit_failures, "resolution checks"
+
+
+def commit_gate_badge_html(run: RunData) -> str:
+    """Compact first-class badge: COMMIT GATE · PASSED · 16 checks · OPT-02."""
+    if run.status == "ESCALATED" and not run.commit_gates:
+        return '<span class="td-gate-badge idle">Commit gate · not reached</span>'
+    passed, n_checks, failed, _source = _gate_numbers(run)
+    option = (run.commit_gate or {}).get("option_id") or run.committed_id or "—"
+    state = "passed" if passed else "failed"
+    return (
+        f'<span class="td-gate-badge {"pass" if passed else "fail"}">'
+        f"<b>Commit gate</b> {state.upper()} · {n_checks} checks · {h(option)}"
+        + (f" · {len(failed)} failed" if failed else "")
+        + "</span>"
+    )
+
+
 def checks_summary_html(run: RunData) -> str:
-    checks = run.final_checks
-    failures = run.commit_failures
-    total = len(checks)
-    if run.status == "ESCALATED":
+    if run.status == "ESCALATED" and not run.commit_gates:
         return (
             '<div class="td-check-summary">'
             + badge("No commit attempted", "grey")
             + "<span>Escalated before the commit gate.</span>"
             "</div>"
         )
-    if not checks:
+    if not run.final_checks and not run.commit_gates:
         return '<div class="td-check-summary">' + badge("No final checks recorded", "amber") + "</div>"
+    _passed, n_checks, failed, source = _gate_numbers(run)
     return (
         '<div class="td-check-summary">'
-        f'<span class="td-check-badge {"fail" if failures else "pass"}">{"FAIL" if failures else "PASS"}</span>'
-        f"<span><b>{total}</b> hard checks re-run on the committed option</span>"
-        f"<span><b>{len(failures)}</b> failed</span>"
+        + commit_gate_badge_html(run)
+        + f"<span><b>{n_checks}</b> hard checks re-run on the committed option</span>"
+        f"<span><b>{len(failed)}</b> failed</span>"
         f"<span>{badge('assert_commit_safe()', 'grey')}</span>"
+        f'<span class="td-source-note">source: {h(source)}</span>'
         "</div>"
     )
 
@@ -926,58 +1125,169 @@ def checks_summary_html(run: RunData) -> str:
 
 
 def commit_gate_html(run: RunData) -> str:
-    if run.status == "ESCALATED":
+    if run.status == "ESCALATED" and not run.commit_gates:
         return (
             '<div class="td-gate idle">'
             '<div class="td-gate-title">Commit gate</div>'
             '<div class="td-gate-text">No option was committed. The case was escalated to a human, so there was nothing to re-check.</div>'
             "</div>"
         )
-    failures = run.commit_failures
-    passed = run.commit_safe
-    kind = "fail" if failures or not passed else ""
+    passed, n_checks, failed, source = _gate_numbers(run)
+    option = (run.commit_gate or {}).get("option_id") or run.committed_id or "—"
     title = "Commit gate passed" if passed else "Commit gate failed"
     text = (
-        f"assert_commit_safe() re-ran <b>{len(run.final_checks)}</b> hard checks on <b>{h(run.committed_id or '—')}</b> and found "
-        f"<b>{len(failures)}</b> failure{'s' if len(failures) != 1 else ''}."
+        f"assert_commit_safe() re-ran <b>{n_checks}</b> hard checks on <b>{h(option)}</b> and found "
+        f"<b>{len(failed)}</b> failure{'s' if len(failed) != 1 else ''}."
     )
-    if failures:
+    if not passed:
         text += " The unsafe option was not committed."
+    # Earlier gates that refused an option before the committed one passed.
+    history = ""
+    refused = [g for g in run.commit_gates if not g.get("passed")]
+    if refused:
+        rows = "".join(
+            '<div class="td-gate-step fail">'
+            f'<b>{h(g.get("option_id"))}</b> refused · '
+            + ", ".join(h(f.get("constraint_id")) for f in g.get("failed") or [] if isinstance(f, dict))
+            + "</div>"
+            for g in refused
+        )
+        history = f'<div class="td-gate-steps">{rows}<div class="td-gate-step pass"><b>{h(option)}</b> passed</div></div>'
     return (
-        f'<div class="td-gate {kind}">'
+        f'<div class="td-gate {"" if passed else "fail"}">'
         f'<div class="td-gate-title">{h(title)}</div>'
         f'<div class="td-gate-text">{text}</div>'
-        '<div class="td-gate-meta">'
+        + history
+        + '<div class="td-gate-meta">'
         + badge("re-checks every constraint", "grey")
         + badge("cannot be overridden by an agent", "grey")
+        + badge(f"from {source}", "grey")
         + "</div>"
         "</div>"
     )
 
 
-def _safety_group_details(run: RunData, role: str, option_id: str, detail: str) -> list[dict[str, Any]]:
-    checks: list[dict[str, Any]] = []
-    role_checks = run.checks_by_role_option.get((role, option_id), [])
-    checks.extend(role_checks)
-    checks.extend(run.checks_by_option.get(option_id, []))
+def _highlight_phrases(text: str, phrases: list[str]) -> str:
+    import re
+
+    escaped = h(text)
+    for phrase in sorted({p for p in phrases if p}, key=len, reverse=True):
+        escaped = re.sub(
+            re.escape(h(phrase)), lambda m: f"<mark>{m.group(0)}</mark>", escaped, flags=re.IGNORECASE
+        )
+    return escaped
+
+
+def injection_cards_html(run: RunData) -> str:
+    """Layer 1: hostile text inside an agent's input, flagged and treated as data."""
+    cards: list[str] = []
+    for entry in run.injections:
+        payload = entry.get("payload") or {}
+        agent = str(payload.get("agent") or entry.get("actor") or "agent")
+        phrases = [str(p) for p in payload.get("phrases") or []]
+        note = str(payload.get("note") or "")
+        name = ROLE_NAMES.get(agent, agent.title())
+        chips = "".join(_chip(h(p), "td-chip-inject") for p in phrases)
+        cards.append(
+            '<div class="td-inject-card">'
+            '<div class="td-safety-head">'
+            f'<div class="td-inject-title">Injection attempt in {h(name)} input — treated as data</div>'
+            f'<div class="td-safety-meta">Turn {h(entry.get("turn"))} · {h(agent)} · {h(payload.get("kind") or "input")}</div>'
+            "</div>"
+            f'<blockquote class="td-inject-quote">{_highlight_phrases(note, phrases)}</blockquote>'
+            f'<div class="td-safety-facts"><span class="td-safety-meta">Matched</span>{chips}</div>'
+            f'<div class="td-inject-handling"><b>Handling</b> {h(payload.get("handling") or "treated as data")}</div>'
+            "</div>"
+        )
+    return "".join(cards)
+
+
+def red_team_layers_html(run: RunData) -> str:
+    """Two-layer summary: [1] text injection resisted, [2] compromised output blocked by code."""
+    n_inj = len(run.injections)
+    n_blocks = len(run.safety_blocks)
+    compromised = [r for r in ROLES if is_compromised(run, r)]
+    if n_inj:
+        layer1 = f"{n_inj} injection{'s' if n_inj != 1 else ''} found in agent input and treated as data."
+        layer1_state = "resisted"
+    elif run.red_team:
+        layer1 = "Not exercised: these agents do not read free text, so no injected note reached a model."
+        layer1_state = "n/a"
+    else:
+        layer1 = "No injection found in agent inputs."
+        layer1_state = "clear"
+    who = ", ".join(ROLE_NAMES.get(r, r) for r in compromised)
+    if n_blocks:
+        layer2 = f"{n_blocks} unsafe output{'s' if n_blocks != 1 else ''} blocked by code" + (
+            f" ({who} compromised)." if who else "."
+        )
+        layer2_state = "blocked"
+    else:
+        layer2 = "No unsafe agent output reached the orchestrator."
+        layer2_state = "clear"
+    return (
+        '<div class="td-layers">'
+        '<div class="td-layer layer-inject">'
+        '<div class="td-layer-num">1</div>'
+        "<div>"
+        f'<div class="td-layer-kicker">Text injection · model layer · {h(layer1_state)}</div>'
+        '<div class="td-layer-title">Hostile text in the input is read as data</div>'
+        f'<div class="td-layer-text">{h(layer1)}</div>'
+        "</div>"
+        "</div>"
+        '<div class="td-layer layer-block">'
+        '<div class="td-layer-num">2</div>'
+        "<div>"
+        f'<div class="td-layer-kicker">Compromised output · code layer · {h(layer2_state)}</div>'
+        '<div class="td-layer-title">Unsafe proposals and votes are blocked by code</div>'
+        f'<div class="td-layer-text">{h(layer2)}</div>'
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+
+
+_BLOCK_TITLES = {
+    "omitted veto": "Code veto added by the orchestrator",
+    "fabricated veto": "Unsupported veto discarded",
+    "unsafe counter rejected": "Unsafe counter rejected",
+    "approve outside shortlist": "Out-of-scope approval discarded",
+    "approve of unsafe option": "Unsafe approval discarded",
+    "commit re-check failed": "Commit re-check failed",
+}
+
+
+def _inferred_failures(run: RunData, role: str, option_id: str, detail: str) -> list[dict[str, Any]]:
+    """Older logs only: rebuild the failing checks behind a SAFETY_BLOCK."""
     if detail == "unsafe counter rejected":
-        checks = run.checks_by_option.get(option_id, [])
+        checks = list(run.checks_by_option.get(option_id, []))
+    else:
+        checks = list(run.checks_by_role_option.get((role, option_id), [])) + list(
+            run.checks_by_option.get(option_id, [])
+        )
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for check in checks:
-        if not isinstance(check, dict):
-            continue
-        if check.get("passed", True):
+        if not isinstance(check, dict) or check.get("passed", True):
             continue
         key = str(check.get("check_id") or f"{check.get('constraint_id')}:{option_id}")
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(check)
+        if key not in seen:
+            seen.add(key)
+            out.append(check)
+    return out
+
+
+def _check_lookup(run: RunData) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for checks in run.checks_by_option.values():
+        for check in checks:
+            if isinstance(check, dict) and check.get("check_id"):
+                out[str(check["check_id"])] = check
     return out
 
 
 def safety_cards_html(run: RunData) -> str:
+    """Layer 2: each SAFETY_BLOCK grouped by (turn, agent, what happened), one row per option."""
     if not run.safety_blocks:
         return (
             '<div class="td-gate">'
@@ -985,66 +1295,60 @@ def safety_cards_html(run: RunData) -> str:
             '<div class="td-gate-text">No agent tried to approve an option outside the code checks. The guard is still active: every approval is filtered and every commit is re-checked.</div>'
             "</div>"
         )
-    groups: dict[tuple[int, str, str], list[str]] = {}
+    lookup = _check_lookup(run)
+    groups: dict[tuple[int, str, str], list[dict[str, Any]]] = {}
     for entry in run.safety_blocks:
-        payload_value = entry.get("payload")
-        payload = payload_value if isinstance(payload_value, dict) else {}
-        key = (
-            int(entry.get("turn") or 0),
-            str(payload.get("role") or "ORCHESTRATOR"),
-            str(payload.get("detail") or "safety block"),
-        )
-        oid = str(payload.get("option_id") or "")
-        groups.setdefault(key, []).append(oid)
+        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+        agent = str(payload.get("agent") or payload.get("role") or "ORCHESTRATOR")
+        key = (int(entry.get("turn") or 0), agent, str(payload.get("detail") or "safety block"))
+        groups.setdefault(key, []).append(payload)
 
     cards = []
-    for (turn, role, detail), option_ids in sorted(groups.items(), key=lambda item: (item[0][0], item[0][1], item[0][2])):
-        unique_ids = [oid for oid in dict.fromkeys(option_ids) if oid]
-        checks: list[dict[str, Any]] = []
-        for oid in unique_ids:
-            checks.extend(_safety_group_details(run, role, oid, detail))
-        check_chips = []
-        seen_checks: set[str] = set()
-        for check in checks:
-            cid = str(check.get("constraint_id") or "?")
-            if cid in seen_checks:
-                continue
-            seen_checks.add(cid)
-            check_chips.append(
-                _chip(
-                    f"<b>{h(cid)}</b> {h(check.get('detail') or '')}",
-                    "td-chip-veto",
-                    f"{check.get('source', '')} · value {check.get('value')} limit {check.get('limit')} {check.get('unit', '')}",
-                )
+    for (turn, agent, detail), payloads in sorted(groups.items()):
+        rows: list[str] = []
+        inferred = False
+        for payload in payloads:
+            oid = str(payload.get("option_id") or "?")
+            if "constraint_ids" in payload:
+                ids = [str(c) for c in payload.get("constraint_ids") or []]
+                details = [lookup.get(str(cid)) for cid in payload.get("check_ids") or []]
+                tips = {
+                    str(c.get("constraint_id")): str(c.get("detail") or "")
+                    for c in details
+                    if isinstance(c, dict)
+                }
+            else:
+                inferred = True
+                failures = _inferred_failures(run, agent, oid, detail)
+                ids = list(dict.fromkeys(str(c.get("constraint_id") or "?") for c in failures))
+                tips = {str(c.get("constraint_id")): str(c.get("detail") or "") for c in failures}
+            if payload.get("claimed_constraint_id"):
+                ids = [f"claimed {payload['claimed_constraint_id']}"]
+            chips = "".join(_chip(f"<b>{h(cid)}</b>", "td-chip-veto", tips.get(cid) or None) for cid in ids)
+            if not chips:
+                chips = '<span class="td-safety-meta">no failing check recorded</span>'
+            rows.append(
+                '<div class="td-block-row">'
+                f'<span class="td-safety-option">{h(oid)}</span>'
+                f'<span class="td-block-ids">{chips}</span>'
+                "</div>"
             )
-        option_html = " ".join(
-            f'<span class="td-safety-option">{h(oid)}</span>' for oid in unique_ids[:10]
-        )
-        if len(unique_ids) > 10:
-            option_html += f' <span class="td-safety-meta">+{len(unique_ids) - 10} more</span>'
-        if detail == "omitted veto":
-            title = "Code veto added by the orchestrator"
-        elif detail == "fabricated veto":
-            title = "Unsupported veto discarded"
-        elif detail == "unsafe counter rejected":
-            title = "Unsafe counter rejected"
-        elif detail == "approve outside shortlist":
-            title = "Out-of-scope approval discarded"
-        elif detail == "approve of unsafe option":
-            title = "Unsafe approval discarded"
-        elif detail == "commit re-check failed":
-            title = "Commit re-check failed"
-        else:
-            title = detail.replace("_", " ").title()
+        title = _BLOCK_TITLES.get(detail, detail.replace("_", " ").title())
+        who = ROLE_NAMES.get(agent, agent.title()) if agent in ROLES else "Orchestrator"
         cards.append(
             '<div class="td-safety-card">'
             '<div class="td-safety-head">'
             f'<div class="td-safety-title">{h(title)}</div>'
-            f'<div class="td-safety-meta">Turn {h(turn)} · {h(role)} · {len(unique_ids)} option(s)</div>'
+            f'<div class="td-safety-meta">Turn {h(turn)} · {h(who)} · {len(payloads)} option(s)</div>'
             "</div>"
             f'<div class="td-safety-text">{h(safety_detail_label(detail))}</div>'
-            f'<div class="td-safety-facts">{option_html}{"".join(check_chips)}</div>'
-            "</div>"
+            f'<div class="td-block-rows">{"".join(rows)}</div>'
+            + (
+                '<div class="td-source-note">Older log: failing checks rebuilt from the agents\' check lists.</div>'
+                if inferred
+                else ""
+            )
+            + "</div>"
         )
     return "".join(cards)
 
@@ -1077,7 +1381,19 @@ def timeline_html(run: RunData) -> str:
         event = str(entry.get("event") or "")
         actor = str(entry.get("actor") or "")
         turn = entry.get("turn")
-        row_class = "safety" if event == "SAFETY_BLOCK" else "commit" if event in ("COMMIT", "CONSENSUS_REACHED") else ""
+        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+        if event == "SAFETY_BLOCK":
+            row_class = "safety"
+        elif event == "INJECTION_DETECTED":
+            row_class = "inject"
+        elif event in ("COMMIT", "CONSENSUS_REACHED"):
+            row_class = "commit"
+        elif event == "COMMIT_GATE":
+            row_class = "commit" if payload.get("passed") else "safety"
+        elif event == "AGENT_CHECKS" and not payload.get("passed", True):
+            row_class = "muted"
+        else:
+            row_class = ""
         rows.append(
             f'<tr class="{row_class}">'
             f'<td class="td-seq">{h(entry.get("seq", "—"))}</td>'
@@ -1096,6 +1412,53 @@ def timeline_html(run: RunData) -> str:
     )
 
 
+_SWATCHES = (
+    "#1d6073", "#b5651d", "#5c4a7c", "#3d8b5a", "#a52e2a", "#c29b2b", "#2b5e80",
+    "#8a5a15", "#7a8f2a", "#9c4f86", "#4f7d8a", "#6b6b6b", "#c46f5a", "#33507f",
+)
+
+
+class _Palette:
+    """Equal hashes get the same swatch; different hashes get visibly different ones."""
+
+    def __init__(self) -> None:
+        self.seen: dict[str, str] = {}
+
+    def colour(self, digest: str) -> str:
+        if digest not in self.seen:
+            self.seen[digest] = _SWATCHES[len(self.seen) % len(_SWATCHES)]
+        return self.seen[digest]
+
+
+def _hash_chip(digest: str, length: int = 10, palette: "_Palette | None" = None) -> str:
+    if not digest:
+        return '<span class="td-hash muted">—</span>'
+    colour = (palette or _Palette()).colour(digest)
+    return (
+        f'<span class="td-hash td-hash-chip" title="{h(digest)}" '
+        f'style="--sw:{colour}">{h(short_hash(digest, length))}</span>'
+    )
+
+
+def _context_legacy_html(run: RunData) -> str:
+    rows = []
+    palette = _Palette()
+    for turn in run.context_turns:
+        hashes = [run.context_hash(turn, role) or "" for role in ROLES]
+        cells = "".join(f"<td>{_hash_chip(d, 14, palette)}</td>" for d in hashes)
+        rows.append(
+            f'<tr><td class="mono">Turn {h(turn)}</td>{cells}<td class="mono">{len(set(hashes))}/{len(ROLES)} distinct</td></tr>'
+        )
+    return (
+        '<div class="td-table-wrap"><table class="td-context-table">'
+        "<thead><tr><th>Turn</th><th>ATC</th><th>Pilot</th><th>Ground</th><th>Independence</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table></div>"
+        '<div class="td-table-note">Older log: one combined hash per agent per turn (public inputs + private fingerprint). '
+        "Different hashes show the agents saw different inputs.</div>"
+    )
+
+
 def context_table_html(run: RunData) -> str:
     turns = run.context_turns
     if not turns:
@@ -1105,23 +1468,53 @@ def context_table_html(run: RunData) -> str:
             '<div class="td-gate-text">The agents were not called in this run (AI off). There are no context hashes to compare.</div>'
             "</div>"
         )
-    rows = []
+    if not run.context_breakdown:
+        return _context_legacy_html(run)
+
+    facts: list[str] = []
+    private_by_role = {
+        role: {run.context_parts(t, role).get("private_sha", "") for t in turns} - {""} for role in ROLES
+    }
+    all_private = [next(iter(v)) for v in private_by_role.values() if len(v) == 1]
+    if len(all_private) == len(ROLES) and len(set(all_private)) == len(ROLES):
+        facts.append(("good", "Private data", f"{len(ROLES)} different fingerprints — one per agent, never shared"))
+    else:
+        facts.append(("warn", "Private data", "fingerprints are not one-per-agent in this log"))
+    if all(len(v) == 1 for v in private_by_role.values()):
+        facts.append(("good", "Across turns", "each agent's private fingerprint is unchanged between turns"))
     for turn in turns:
-        hashes = [run.context_hash(turn, role) or "" for role in ROLES]
-        distinct = len(set(hashes))
-        cells = "".join(
-            f'<td><span class="td-hash" title="{h(digest)}">{h(short_hash(digest, 14))}</span></td>'
-            for digest in hashes
-        )
-        rows.append(
-            f"<tr><td class=\"mono\">Turn {h(turn)}</td>{cells}<td class=\"mono\">{distinct}/{len(ROLES)} distinct</td></tr>"
-        )
+        publics = [run.context_parts(turn, role).get("public_sha", "") for role in ROLES]
+        if len(set(publics)) == 1:
+            facts.append(("info", f"Turn {turn} public input", "identical for all three: one broadcast from the orchestrator"))
+        else:
+            facts.append(("info", f"Turn {turn} public input", "differs per agent: each sees only the other two agents' public summaries"))
+    fact_html = "".join(
+        f'<div class="td-indep-fact {k}"><b>{h(t)}</b><span>{h(v)}</span></div>' for k, t, v in facts
+    )
+
+    rows: list[str] = []
+    palette = _Palette()
+    for turn in turns:
+        for index, role in enumerate(ROLES):
+            parts = run.context_parts(turn, role)
+            rows.append(
+                f'<tr class="{"td-turn-first" if index == 0 else ""}">'
+                + (f'<td class="mono" rowspan="{len(ROLES)}">Turn {h(turn)}</td>' if index == 0 else "")
+                + f'<td class="td-actor td-actor-{h(role)}">{h(role)}</td>'
+                f"<td>{_hash_chip(parts.get('public_sha', ''), 10, palette)}</td>"
+                f"<td>{_hash_chip(parts.get('private_sha', ''), 10, palette)}</td>"
+                f"<td>{_hash_chip(run.context_hash(turn, role) or '', 12, palette)}</td>"
+                "</tr>"
+            )
     return (
+        f'<div class="td-indep-facts">{fact_html}</div>'
         '<div class="td-table-wrap"><table class="td-context-table">'
-        "<thead><tr><th>Turn</th><th>ATC</th><th>Pilot</th><th>Ground</th><th>Independence</th></tr></thead>"
+        "<thead><tr><th>Turn</th><th>Agent</th><th>Public input · sent by orchestrator</th>"
+        "<th>Private data · agent only</th><th>Combined (log entry)</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table></div>"
-        '<div class="td-table-note">Each hash covers the public event, the agent\'s own inputs and a private-data fingerprint. Different hashes mean the three agents saw different private inputs; the orchestrator only routed public messages.</div>'
+        '<div class="td-table-note">Equal hashes share a colour. Public input is everything the orchestrator sent that turn; '
+        "private data is a fingerprint of what only that agent holds (fuel, gates, slots…). The orchestrator never sees it.</div>"
     )
 
 
@@ -1131,49 +1524,82 @@ def usage_table_html(run: RunData) -> str:
         return (
             '<div class="td-note">No model calls recorded. Stub agents and the fallback run entirely in code.</div>'
         )
+    live = [r for r in rows if not r.get("cached")]
+    cached = [r for r in rows if r.get("cached")]
+    tokens = sum(int(r.get("prompt_tokens") or 0) + int(r.get("completion_tokens") or 0) for r in rows)
+    live_ms = sum(float(r.get("ms") or 0) for r in live)
+    repaired = sum(1 for r in rows if r.get("repaired"))
+    summary = (
+        '<div class="td-check-summary">'
+        f"<span><b>{len(rows)}</b> model calls</span>"
+        f"<span><b>{len(live)}</b> live · <b>{len(cached)}</b> cached replay</span>"
+        f"<span><b>{fmt_num(tokens)}</b> tokens</span>"
+        f"<span><b>{live_ms / 1000:.1f} s</b> live model time</span>"
+        + (f"<span><b>{repaired}</b> repaired</span>" if repaired else "")
+        + "</div>"
+    )
     body = []
     for row in rows:
-        cached = "yes" if row.get("cached") else "no"
-        ms = row.get("ms")
-        try:
-            ms_text = f"{float(ms):,.0f} ms"
-        except Exception:
-            ms_text = "—"
+        is_cached = bool(row.get("cached"))
+        if is_cached:
+            time_cell = '<span class="td-usage-cached">cached replay</span>'
+        else:
+            try:
+                time_cell = h(f"{float(row.get('ms') or 0):,.0f} ms")
+            except Exception:
+                time_cell = "—"
+        flags = []
+        if row.get("repaired"):
+            flags.append('<span class="td-usage-repaired">repaired</span>')
         body.append(
-            "<tr>"
+            f'<tr class="{"td-row-cached" if is_cached else ""}">'
             f'<td class="td-seq">{h(row.get("seq"))}</td>'
-            f'<td class="td-seq">T{h(row.get("turn"))}</td>'
+            f'<td class="mono">{h(row.get("step") or "")}</td>'
             f'<td class="td-actor td-actor-{h(row.get("role"))}">{h(row.get("role"))}</td>'
             f'<td class="mono">{h(row.get("model") or "—")}</td>'
             f'<td class="mono">{h(fmt_num(row.get("prompt_tokens")))}</td>'
             f'<td class="mono">{h(fmt_num(row.get("completion_tokens")))}</td>'
-            f'<td class="mono">{h(ms_text)}</td>'
-            f'<td class="mono">{h(cached)}</td>'
+            f'<td class="mono">{time_cell}</td>'
+            f'<td>{"".join(flags) or "—"}</td>'
             "</tr>"
         )
     return (
-        '<div class="td-table-wrap"><table class="td-timeline">'
-        "<thead><tr><th>Seq</th><th>Turn</th><th>Agent</th><th>Model</th><th>Prompt tokens</th><th>Completion tokens</th><th>Time</th><th>Cached</th></tr></thead>"
+        summary
+        + '<div class="td-table-wrap"><table class="td-timeline">'
+        "<thead><tr><th>Seq</th><th>Step</th><th>Agent</th><th>Model</th><th>Prompt tokens</th>"
+        "<th>Completion tokens</th><th>Time</th><th>Notes</th></tr></thead>"
         f"<tbody>{''.join(body)}</tbody>"
         "</table></div>"
+        '<div class="td-table-note">Cached replay: the response came from the prompt-hash cache, so the run is reproducible offline. '
+        "Repaired: the first reply failed schema validation and one repair retry succeeded.</div>"
     )
 
 
 def manifest_html(run: RunData) -> str:
     manifest = run.manifest
-    impls = manifest.get("agent_impl") or {}
+    impls = run.agent_impl
     impl_text = " · ".join(f"{h(role)} {h(impls.get(role, '—'))}" for role in ROLES)
     prompt_hashes = manifest.get("prompt_hashes") or {}
+    flag_bits = [
+        f"impl {run.log_flags.get('impl') or ('llm' if 'llm' in impl_text else 'stub')}",
+        f"red-team {'on' if run.red_team else 'off'}",
+        f"AI {'off' if run.ai_off else 'on'}",
+        f"defect {run.defect_id or 'none'}",
+    ]
+    flag_source = "SETUP.flags" if run.log_flags else "inferred from folder name"
+    seed = manifest.get("seed", run.log_flags.get("seed"))
     cells = [
         ("Run record", run.run_id, True),
-        ("Dataset row", fmt_num(manifest.get("dataset_row")), False),
-        ("Seed", fmt_num(manifest.get("seed")), False),
+        ("Dataset row", fmt_num(run.dataset_row), False),
+        ("Seed", fmt_num(seed), False),
         ("Mode", run.mode or "—", False),
         ("Agents", impl_text, False),
         ("Config sha256", short_hash(manifest.get("config_sha256"), 18), False),
         ("Code version", manifest.get("code_version") or "—", False),
         ("Created", manifest.get("created") or "—", False),
         ("Prompt hashes", f"{len(prompt_hashes)} recorded" if prompt_hashes else "none recorded", False),
+        (f"Run flags · {flag_source}", h(" · ".join(flag_bits)), False),
+        ("Header source", "SETUP.public (as logged)" if run.public_from_log else "rebuilt from dataset row + seed", False),
     ]
     remainder = (4 - len(cells) % 4) % 4
     return (

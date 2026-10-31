@@ -9,6 +9,10 @@ ROLE_NAMES = {"ATC": "ATC", "PILOT": "Pilot", "GROUND": "Ground"}
 
 EVENT_LABELS = {
     "SETUP": "Setup",
+    "PERCEPTION": "Perception",
+    "INJECTION_DETECTED": "Injection resisted",
+    "AGENT_CHECKS": "Agent checks",
+    "COMMIT_GATE": "Commit gate",
     "OPTIONS_GENERATED": "Options generated",
     "SHARED_CHECKS": "Shared checks",
     "PROPOSAL": "Turn 1 proposal",
@@ -32,6 +36,49 @@ SAFETY_DETAILS = {
     "approve of unsafe option": "The agent approved an option that failed a hard check. The vote was discarded.",
     "commit re-check failed": "The final commit check failed. The option was not committed.",
 }
+
+_TAG_RE = None
+
+
+def split_rationale(text: Any) -> dict[str, Any]:
+    """Split an agent rationale into prose and the machine-added suffix tags.
+
+    Handles ``[approves: A, B]``, ``[LLM approved: A]``, ``[COMPROMISED AGENT: ...]``
+    and a trailing ``| free-text reasons: ...``. Unknown ``[Label: ...]`` tags are kept
+    as generic notes so nothing is silently dropped.
+    """
+    import re
+
+    global _TAG_RE
+    if _TAG_RE is None:
+        _TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z \-]{1,40}):\s*([^\]]*)\]")
+    raw = str(text or "").strip()
+    reasons = ""
+    marker = "| free-text reasons:"
+    if marker in raw:
+        raw, reasons = raw.split(marker, 1)
+        reasons = reasons.strip()
+    out: dict[str, Any] = {
+        "body": "",
+        "approves": [],
+        "llm_approved": [],
+        "compromised": [],
+        "notes": [],
+        "reasons": reasons,
+    }
+    for label, value in _TAG_RE.findall(raw):
+        key = label.strip().lower()
+        ids = [v.strip() for v in value.split(",") if v.strip()]
+        if key == "approves":
+            out["approves"].extend(ids)
+        elif key == "llm approved":
+            out["llm_approved"].extend(ids)
+        elif key.startswith("compromised"):
+            out["compromised"].append(value.strip())
+        else:
+            out["notes"].append(f"{label.strip()}: {value.strip()}")
+    out["body"] = _TAG_RE.sub("", raw).strip()
+    return out
 
 REASONS = {
     "UNANIMOUS_FIRST_CHOICE": "All three agents ranked the same option first, with no objection on it.",
@@ -304,7 +351,14 @@ def event_summary(entry: dict[str, Any]) -> str:
         disapprove = sum(1 for v in votes if isinstance(v, dict) and v.get("vote") == "DISAPPROVE")
         return f"{approve} approve · {disapprove} disapprove"
     if event == "SAFETY_BLOCK":
-        return f"{payload.get('detail', '?')} · {payload.get('option_id', '?')}"
+        ids = payload.get("constraint_ids") or []
+        who = payload.get("agent") or payload.get("role")
+        text = f"{payload.get('detail', '?')} · {payload.get('option_id', '?')}"
+        if who:
+            text = f"{who} · " + text
+        if ids:
+            text += " · " + ", ".join(str(i) for i in ids)
+        return text
     if event == "AGENT_FAILOVER":
         error = str(payload.get("error") or "")
         return f"{payload.get('role', '?')} · {error[:80]}"
@@ -316,4 +370,33 @@ def event_summary(entry: dict[str, Any]) -> str:
         return str(payload.get("reason", "")).replace("_", " ").lower()
     if event == "CONSENSUS_REACHED":
         return str(payload.get("option_id", ""))
+    if event == "PERCEPTION":
+        facts = payload.get("facts") or []
+        defaults = payload.get("n_conservative_defaults") or 0
+        sources = sorted({str(f.get("source")) for f in facts if isinstance(f, dict) and f.get("source")})
+        text = f"{len(facts)} fact{'s' if len(facts) != 1 else ''} · {'/'.join(sources) or '—'}"
+        if defaults:
+            text += f" · {defaults} conservative default{'s' if defaults != 1 else ''}"
+        if payload.get("failover"):
+            text += " · failover"
+        return text
+    if event == "INJECTION_DETECTED":
+        phrases = payload.get("phrases") or []
+        return f"{payload.get('kind') or 'input'} · {', '.join(str(p) for p in phrases[:4])} · treated as data"
+    if event == "AGENT_CHECKS":
+        agents = payload.get("agents") or {}
+        failed = [
+            f"{role} {', '.join(item.get('failed_constraint_ids') or [])}"
+            for role, item in agents.items()
+            if isinstance(item, dict) and not item.get("passed", True)
+        ]
+        state = "pass" if payload.get("passed") else "fail"
+        return f"{payload.get('option_id', '?')} · {state}" + (f" · {'; '.join(failed)}" if failed else "")
+    if event == "COMMIT_GATE":
+        state = "passed" if payload.get("passed") else "FAILED"
+        failed = payload.get("failed") or []
+        text = f"{payload.get('option_id', '?')} · {state} · {payload.get('n_checks', '?')} checks"
+        if failed:
+            text += " · " + ", ".join(str(f.get("constraint_id")) for f in failed if isinstance(f, dict))
+        return text
     return ""
